@@ -1,0 +1,190 @@
+# gai Implementation Progress
+
+## Phase 1: Core Types ✓
+
+### Dependencies ✓
+- [x] gleam_http
+- [x] gleam_json
+- [x] sextant (local path)
+
+### gai.gleam - Core Types ✓
+- [x] Role type (System, User, Assistant)
+- [x] Content type (Text, Image, Document, ToolUse, ToolResult)
+- [x] ImageSource type (ImageBase64, ImageUrl)
+- [x] DocumentSource type (DocumentBase64, DocumentUrl)
+- [x] Message type
+- [x] StopReason type
+- [x] Usage type
+- [x] Convenience constructors
+
+### gai/error.gleam ✓
+- [x] Error type variants
+- [x] to_string function
+
+### gai/request.gleam ✓
+- [x] ResponseFormat type
+- [x] ToolChoice type
+- [x] CompletionRequest type
+- [x] Builder functions
+
+### gai/response.gleam ✓
+- [x] CompletionResponse type
+- [x] Helper functions (text_content, tool_calls, has_tool_calls)
+
+### gai/streaming.gleam ✓
+- [x] StreamDelta type
+
+### gai/provider.gleam ✓
+- [x] Provider type
+- [x] Helper functions
+
+## Phase 2: OpenAI Provider ✓
+
+- [x] Config type with builder (opaque)
+- [x] build_request - JSON encoding
+- [x] parse_response - JSON decoding
+- [x] parse_stream_chunk
+- [x] provider() constructor
+- [x] Convenience constructors (openrouter, xai, mistral, groq, together)
+
+## Phase 3: Tool Calling ✓
+
+- [x] gai/tool.gleam
+- [x] Tool(a) opaque type with Sextant JsonSchema
+- [x] UntypedTool for type erasure (list storage)
+- [x] Tool schema generation (to_json_schema)
+- [x] Tool call parsing (parse_arguments)
+- [x] Integration with request.gleam (with_tools uses UntypedTool)
+
+## Phase 4: Anthropic Provider ✓
+
+- [x] Config type with builder (opaque)
+- [x] build_request - JSON encoding (system message extraction, content blocks)
+- [x] parse_response - JSON decoding (content blocks, tool_use)
+- [x] parse_stream_chunk (event types: content_block_delta, message_delta, etc.)
+- [x] provider() constructor
+
+## Phase 5: Google Gemini Provider ✓
+
+- [x] Config type with builder (opaque)
+- [x] build_request - JSON encoding (systemInstruction, parts format, query param auth)
+- [x] parse_response - JSON decoding (candidates, parts, functionCall)
+- [x] parse_stream_chunk
+- [x] provider() constructor
+
+## Phase 6: Streaming ✓
+
+- [x] parse_sse - Parse raw SSE text into event data strings
+- [x] Accumulator opaque type
+- [x] new_accumulator() - Create empty accumulator
+- [x] accumulate() - Add deltas, merge consecutive text
+- [x] finish() - Return final CompletionResponse
+
+## Phase 7: Advanced Features ✓
+
+- [x] Image content types (ImageUrl, ImageBase64)
+- [x] Document content types (DocumentUrl, DocumentBase64)
+- [x] OpenAI-compatible providers (OpenRouter, xAI, Mistral, Groq, Together)
+- [x] Integration tests
+
+## Phase 8: Agent Framework Support (PRD)
+
+### GAI-001: append_response helper ✓
+- Added response.append_response() that appends assistant message to conversation
+- Filters out Thinking content (Anthropic-specific)
+
+### GAI-002: tool_result helpers ✓
+- Added gai.tool_result() and gai.tool_result_error() content constructors
+- Added gai.tool_results_message() to wrap multiple results in User message
+
+### GAI-003: assistant_text helper ✓
+- Added gai.assistant_text() convenience constructor
+
+### GAI-004: ConversationUsage type ✓
+- Created gai/usage.gleam with opaque ConversationUsage type
+- Tracks total_input_tokens, total_output_tokens, request_count
+
+### GAI-005: context limits ✓
+- Added context_limit() and output_limit() functions
+- Model lookup for OpenAI, Anthropic, Google models
+
+### GAI-006: RetryConfig type ✓
+- Created gai/retry.gleam with opaque RetryConfig type
+- Builder functions for max_attempts, base_delay, max_delay
+
+### GAI-007: should_retry predicate ✓
+- Added should_retry(config, error) function
+- Returns True for RateLimited and HttpError (5xx)
+
+### GAI-008: delay calculation ✓
+- Added delay_ms() for exponential backoff
+- Added delay_for_error_ms() with rate limit retry-after support
+- Added add_jitter() for randomisation
+
+### GAI-009: Extended thinking request builder ✓
+- Added with_thinking(budget_tokens) to Anthropic Config
+- Adds thinking config and anthropic-beta header
+
+### GAI-010: Extended thinking response parsing ✓
+- Added Thinking(text) Content variant
+- Anthropic parse_response handles thinking blocks
+- Added thinking_content() and has_thinking() helpers
+- append_response filters out Thinking content
+
+### GAI-011: Anthropic prompt caching request ✓
+- Added CacheControl type (Ephemeral variant)
+- Added cache_control field to Message type
+- Added cached_system() helper
+- Anthropic encodes cache_control in system and message content
+
+### GAI-012: Anthropic cache usage parsing ✓
+- Extended Usage type with cache_creation_input_tokens and cache_read_input_tokens fields
+- Added cache_read_tokens(), cache_creation_tokens(), cache_hit_rate() helpers
+- Updated Anthropic parse_usage to extract cache fields
+- Non-Anthropic providers set cache fields to None
+
+### GAI-013: Response memoization types ✓
+- Created gai/cache.gleam module
+- Added opaque CacheKey type wrapping SHA256 hash
+- Added cache_key(req) function for deterministic key generation
+- Key includes: model, messages, max_tokens, temperature, tools, tool_choice, response_format
+- Key excludes: provider_options
+- Added key_to_string() for storage
+- Added CacheConfig type with TTL
+- Added default_cache_config() and with_ttl()
+
+### Learning: Adding fields to types
+Adding a field to a public type (like Message or Usage) breaks all pattern matches.
+Use `..` in patterns to allow extra fields: `gai.Usage(input_tokens:, output_tokens:, ..)`
+
+## Summary
+
+All phases complete. 185 tests passing.
+
+### Test Coverage:
+- gai_test.gleam - Core type tests
+- gai/error_test.gleam - Error type tests
+- gai/request_test.gleam - Request builder tests
+- gai/response_test.gleam - Response helper tests
+- gai/provider_test.gleam - Provider abstraction tests
+- gai/openai_test.gleam - OpenAI provider tests
+- gai/anthropic_test.gleam - Anthropic provider tests
+- gai/google_test.gleam - Google Gemini provider tests
+- gai/tool_test.gleam - Tool/Sextant integration tests
+- gai/streaming_test.gleam - SSE parsing and accumulator tests
+- integration_test.gleam - End-to-end flow tests
+
+### Files Created:
+- src/gai.gleam
+- src/gai/error.gleam
+- src/gai/request.gleam
+- src/gai/response.gleam
+- src/gai/provider.gleam
+- src/gai/streaming.gleam
+- src/gai/tool.gleam
+- src/gai/openai.gleam
+- src/gai/anthropic.gleam
+- src/gai/google.gleam
+- src/gai/usage.gleam (Phase 8: token tracking)
+- src/gai/retry.gleam (Phase 8: retry logic)
+- src/gai/cache.gleam (Phase 8: response memoization)

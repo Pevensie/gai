@@ -1,0 +1,372 @@
+{
+  "project": "gai",
+  "branchName": "agent-framework-features",
+  "description": "Agent Framework Support - Add conversation helpers, token tracking, retry logic, extended thinking, and caching to support building agent frameworks on top of gai",
+  "context": {
+    "background": "gai is a transport-agnostic Gleam library for LLM APIs. It constructs HTTP requests and parses responses but does not perform HTTP calls. This PRD adds features to support building agent frameworks that handle tool loops, conversation management, and reliability.",
+    "designPrinciples": [
+      "Transport agnostic - no HTTP calls, just request/response transformation",
+      "Purely functional - easy to test, no side effects",
+      "Provider polymorphic - features work across OpenAI, Anthropic, Google where applicable",
+      "Type safe - leverage Gleam's type system for correctness"
+    ],
+    "relatedFiles": [
+      "src/gai.gleam - Core types (Message, Content, Role, Usage, Error)",
+      "src/gai/response.gleam - CompletionResponse + helpers",
+      "src/gai/request.gleam - CompletionRequest + builders",
+      "src/gai/anthropic.gleam - Anthropic provider",
+      "PLAN.md - Original design document"
+    ]
+  },
+  "userStories": [
+    {
+      "id": "GAI-001",
+      "title": "Conversation helper: append_response",
+      "description": "As a framework developer, I need to easily append an assistant's response to the message history so I can continue multi-turn conversations.",
+      "justification": "Agent loops require appending the assistant's response to the conversation before adding tool results or making the next request. Currently users must manually construct Message values from CompletionResponse content, which is error-prone and verbose. This is the most fundamental operation in any agent loop.",
+      "acceptanceCriteria": [
+        "Add `append_response(messages: List(Message), resp: CompletionResponse) -> List(Message)` to response.gleam",
+        "Function creates an Assistant message from response content and appends it to the end of messages list",
+        "Handles both text and tool_use content blocks correctly (preserves all content)",
+        "Does NOT include Thinking content in the appended message (thinking is internal)",
+        "Unit tests cover: text-only response, tool-only response, mixed content response, empty content response",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "Place in response.gleam since it operates on CompletionResponse",
+        "Append to end (not prepend) to maintain chronological order",
+        "Return new list rather than mutating - functional style consistent with library",
+        "Exclude thinking content since it's not part of the conversation history sent back to the model"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "GAI-002",
+      "title": "Conversation helper: tool_result",
+      "description": "As a framework developer, I need to create tool result messages from executed tool calls so the model can see the results and continue reasoning.",
+      "justification": "After executing tools, agents must send results back to the model. The ToolResult content type exists but creating properly formatted messages requires understanding the internal structure. This helper makes the common case easy while handling the correlation between tool calls and results via tool_use_id.",
+      "acceptanceCriteria": [
+        "Add `tool_result(tool_use_id: String, result: String) -> Content` to gai.gleam - creates single ToolResult content block",
+        "Add `tool_result_error(tool_use_id: String, error: String) -> Content` to gai.gleam - creates error result",
+        "Add `tool_results_message(results: List(#(String, String))) -> Message` to gai.gleam - creates User message with multiple tool results",
+        "ToolResult content wraps result string in Text content: `ToolResult(tool_use_id, [Text(result)])`",
+        "Unit tests cover: single result, multiple results, error results, empty result string",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "Place in gai.gleam alongside other content constructors (text, image_url, etc.)",
+        "Use User role for tool result messages - this is what all providers expect",
+        "Accept String for results rather than Content - the common case is text results, and users can use the Content constructors directly for complex cases",
+        "Separate error helper since error formatting may differ (some providers use is_error flag)",
+        "Take tool_use_id as String rather than extracting from ToolUse content - more flexible and explicit"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Tool results must include the tool_use_id from the original ToolUse to correlate request/response. Anthropic requires this, OpenAI uses it for the tool_call_id field."
+    },
+    {
+      "id": "GAI-003",
+      "title": "Conversation helper: assistant_text",
+      "description": "As a framework developer, I need to easily create assistant messages with text content for injecting into conversations or building few-shot examples.",
+      "justification": "We have `user_text` but no equivalent for assistant messages. This asymmetry makes few-shot prompting and conversation injection verbose. Adding this completes the set of convenience constructors and maintains API consistency.",
+      "acceptanceCriteria": [
+        "Add `assistant_text(text: String) -> Message` to gai.gleam",
+        "Creates `Message(role: Assistant, content: [Text(text)])`",
+        "Mirrors the existing `user_text` function exactly in style",
+        "Unit tests verify correct message structure",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "Place in gai.gleam alongside user_text, system, user, assistant constructors",
+        "Simple wrapper - no additional logic needed",
+        "Name follows existing convention: {role}_text for single text content"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Small addition but improves API symmetry and reduces friction for common operations."
+    },
+    {
+      "id": "GAI-004",
+      "title": "Token tracking: ConversationUsage type",
+      "description": "As a framework developer, I need to track cumulative token usage across a conversation for cost monitoring, billing, and context window management.",
+      "justification": "Individual responses include Usage but agents need cumulative totals. Without this, framework developers must implement their own accumulation logic. This is especially important for long-running agents that may make dozens of API calls. Tracking turns also helps with debugging and observability.",
+      "acceptanceCriteria": [
+        "Create new module `gai/usage.gleam`",
+        "Add opaque type `ConversationUsage` with fields: total_input_tokens (Int), total_output_tokens (Int), turn_count (Int)",
+        "Add `new() -> ConversationUsage` constructor initializing all to 0",
+        "Add `add(conv: ConversationUsage, resp_usage: Usage) -> ConversationUsage` to accumulate from response",
+        "Add `total_tokens(conv: ConversationUsage) -> Int` returning input + output",
+        "Add `input_tokens(conv: ConversationUsage) -> Int` getter",
+        "Add `output_tokens(conv: ConversationUsage) -> Int` getter",
+        "Add `turns(conv: ConversationUsage) -> Int` getter",
+        "Unit tests verify: accumulation across multiple adds, getters return correct values, new() starts at zero",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "New module gai/usage.gleam to keep gai.gleam focused on core types",
+        "Opaque type to allow future extension (e.g., adding cache tokens) without breaking API",
+        "Separate input/output tracking since pricing often differs between them",
+        "Turn count included for observability - helps debug runaway agent loops",
+        "No cost calculation here - prices change frequently and vary by provider/model, leave to user"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "GAI-005",
+      "title": "Token tracking: context limits",
+      "description": "As a framework developer, I need to know model context limits to implement truncation strategies and avoid API errors from exceeding limits.",
+      "justification": "Different models have vastly different context windows (4K to 2M tokens). Agents need this information to decide when to truncate conversation history. Hardcoding limits in each application is error-prone and tedious. A central registry makes this data easily accessible.",
+      "acceptanceCriteria": [
+        "Add `context_limit(provider: String, model: String) -> Option(Int)` to gai/usage.gleam",
+        "Add `output_limit(provider: String, model: String) -> Option(Int)` for max output tokens",
+        "Include limits for common models:",
+        "  - OpenAI: gpt-4o (128K/16K), gpt-4o-mini (128K/16K), gpt-4-turbo (128K/4K), gpt-3.5-turbo (16K/4K)",
+        "  - Anthropic: claude-3-5-sonnet (200K/8K), claude-3-5-haiku (200K/8K), claude-3-opus (200K/4K)",
+        "  - Google: gemini-1.5-pro (2M/8K), gemini-1.5-flash (1M/8K), gemini-2.0-flash (1M/8K)",
+        "Return None for unknown models - don't guess",
+        "Provider matching is case-insensitive ('openai', 'OpenAI' both work)",
+        "Model matching uses starts_with for version flexibility ('gpt-4o' matches 'gpt-4o-2024-08-06')",
+        "Unit tests verify: known models return correct limits, unknown models return None, case insensitivity",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "Return Option rather than default value - unknown models should be handled explicitly by caller",
+        "Use String for provider/model rather than types - more flexible for new models",
+        "starts_with matching for models since providers often append dates/versions",
+        "Separate context vs output limits since they differ significantly",
+        "No runtime fetching - these are compile-time constants. Users can override if needed",
+        "Consider making this a Dict that users can extend, but start simple"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Limits change over time. Document that these are point-in-time values and users should verify against provider docs for production use."
+    },
+    {
+      "id": "GAI-006",
+      "title": "Retry logic: RetryConfig type",
+      "description": "As a framework developer, I need configurable retry behaviour for handling transient API failures without implementing backoff logic from scratch.",
+      "justification": "LLM APIs frequently return transient errors (rate limits, server errors). Every agent framework needs retry logic. Providing a well-designed config type with sensible defaults saves developers from reimplementing exponential backoff incorrectly. The config is separate from execution to maintain gai's transport-agnostic design.",
+      "acceptanceCriteria": [
+        "Create new module `gai/retry.gleam`",
+        "Add opaque type `RetryConfig` with fields: max_attempts (Int), initial_delay_ms (Int), max_delay_ms (Int), multiplier (Float)",
+        "Add `default() -> RetryConfig` with values: max_attempts=3, initial_delay_ms=1000, max_delay_ms=60000, multiplier=2.0",
+        "Add builder functions: `with_max_attempts(config, Int)`, `with_initial_delay(config, Int)`, `with_max_delay(config, Int)`, `with_multiplier(config, Float)`",
+        "Add getters for all fields to allow inspection",
+        "Unit tests verify: default values are correct, builders modify correct fields, builders are chainable",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "New module gai/retry.gleam for retry-related functionality",
+        "Opaque type with builders - idiomatic Gleam pattern matching rest of library",
+        "Sensible defaults that work for most LLM APIs without configuration",
+        "60 second max delay - long enough for rate limit recovery, short enough to not hang forever",
+        "Multiplier as Float for standard exponential backoff (2.0 = doubling)",
+        "No retry execution here - gai doesn't do HTTP. Config is data only, execution is caller's responsibility"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "This follows gai's transport-agnostic design. We provide the config and delay calculation, but actual retry execution happens in user code or a separate runtime library."
+    },
+    {
+      "id": "GAI-007",
+      "title": "Retry logic: should_retry predicate",
+      "description": "As a framework developer, I need to determine which errors are retryable so I don't waste time retrying permanent failures like authentication errors.",
+      "justification": "Not all errors should be retried. Retrying auth errors wastes quota and time. Retrying rate limits with proper backoff usually succeeds. This predicate encodes best practices for LLM API error handling so framework developers don't need to research each error type.",
+      "acceptanceCriteria": [
+        "Add `should_retry(error: Error) -> Bool` to gai/retry.gleam",
+        "Returns True for:",
+        "  - RateLimited (any retry_after value)",
+        "  - HttpError with status 429 (rate limit)",
+        "  - HttpError with status 500, 502, 503, 504 (server errors)",
+        "  - HttpError with status 408 (request timeout)",
+        "Returns False for:",
+        "  - ApiError (model errors, invalid requests - won't succeed on retry)",
+        "  - AuthError (need to fix credentials)",
+        "  - ParseError (response format issue - won't change on retry)",
+        "  - JsonError (our parsing bug - won't change on retry)",
+        "  - HttpError with 4xx status (except 408, 429)",
+        "Unit tests cover all error types and status codes",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "Conservative approach - only retry errors that are likely transient",
+        "Include 408 Request Timeout as retryable - network issues can be transient",
+        "Exclude all other 4xx - these indicate client errors that won't be fixed by retry",
+        "RateLimited always retryable - this is the primary use case for retry logic",
+        "No special handling for specific ApiError codes - too provider-specific and fragile"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "GAI-008",
+      "title": "Retry logic: delay calculation",
+      "description": "As a framework developer, I need exponential backoff with jitter calculation to implement retry delays that avoid thundering herd problems.",
+      "justification": "Naive retry with fixed delays causes thundering herd when many clients retry simultaneously after an outage. Exponential backoff with jitter is the industry standard solution. Respecting rate limit retry-after headers is essential for staying within provider limits.",
+      "acceptanceCriteria": [
+        "Add `delay_ms(config: RetryConfig, attempt: Int) -> Int` to gai/retry.gleam",
+        "Implements exponential backoff: initial_delay_ms * (multiplier ^ attempt) where attempt is 0-indexed",
+        "Caps result at max_delay_ms",
+        "Add `delay_for_error_ms(config: RetryConfig, attempt: Int, error: Error) -> Int`",
+        "For RateLimited errors with Some(retry_after), returns max(calculated_delay, retry_after * 1000)",
+        "For other errors, returns calculated_delay",
+        "Add `add_jitter(delay_ms: Int, max_jitter_percent: Int) -> Int` that adds 0 to max_jitter_percent random variation",
+        "Note: add_jitter requires a random source - document that caller should provide randomness",
+        "Unit tests verify: backoff calculation at each attempt, capping at max_delay, retry_after respected",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "0-indexed attempts: attempt 0 = initial_delay, attempt 1 = initial * multiplier, etc.",
+        "Separate delay_ms and delay_for_error_ms - sometimes you want base calculation without error inspection",
+        "Jitter as separate function - keeps pure functions pure, caller provides randomness",
+        "max_jitter_percent parameter rather than hardcoded - flexibility for different use cases",
+        "Return Int milliseconds - standard unit, easy to use with sleep/timer functions",
+        "Respect retry_after from rate limit errors - providers know their limits better than we do"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Jitter requires randomness which is side-effectful. By making it a separate function that takes a delay, we keep the core calculation pure and let callers handle randomness however they prefer (seeded PRNG, system random, etc.)."
+    },
+    {
+      "id": "GAI-009",
+      "title": "Extended thinking: request builder",
+      "description": "As a framework developer, I need to enable Claude's extended thinking feature for complex reasoning tasks that benefit from chain-of-thought.",
+      "justification": "Claude's extended thinking (interleaved thinking) allows the model to reason step-by-step before responding, improving quality on complex tasks. This is particularly valuable for agent frameworks doing multi-step planning. The feature requires specific request configuration and beta headers.",
+      "acceptanceCriteria": [
+        "Add `with_thinking(config: Config, budget_tokens: Int) -> Config` to gai/anthropic.gleam",
+        "Stores thinking budget in config (new field needed)",
+        "Update build_request to include thinking configuration when budget > 0:",
+        "  - Add `thinking` object to request body with `type: 'enabled'` and `budget_tokens: N`",
+        "  - Add `anthropic-beta: interleaved-thinking-2025-05-14` header",
+        "When budget is 0 or not set, no thinking config added (backwards compatible)",
+        "Unit tests verify: request JSON includes thinking when enabled, header present, no thinking when disabled",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "Add to Config rather than CompletionRequest - thinking is provider-specific, not part of common request",
+        "Budget in tokens rather than 'low/medium/high' - more precise control",
+        "0 budget means disabled - simple sentinel value",
+        "Beta header is hardcoded - will update when feature goes GA",
+        "No validation of budget range - let API return errors for invalid values"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Extended thinking is currently in beta. The header version may change when it goes GA. Temperature must be 1.0 when thinking is enabled - consider enforcing this or documenting it."
+    },
+    {
+      "id": "GAI-010",
+      "title": "Extended thinking: response parsing",
+      "description": "As a framework developer, I need to extract thinking content from Claude's response separately from the main output for logging, debugging, or displaying to users.",
+      "justification": "When extended thinking is enabled, Claude returns thinking blocks interleaved with text. Framework developers need to access this thinking for observability and debugging. The thinking should be separate from text_content() since it's not part of the actual response to show users.",
+      "acceptanceCriteria": [
+        "Add `Thinking(text: String)` variant to Content type in gai.gleam",
+        "Update Anthropic response parser to detect content blocks with `type: 'thinking'` and parse as Thinking",
+        "Add `thinking_content(resp: CompletionResponse) -> Option(String)` to response.gleam - extracts concatenated thinking",
+        "Add `has_thinking(resp: CompletionResponse) -> Bool` helper",
+        "Update `text_content(resp: CompletionResponse)` to EXCLUDE Thinking blocks",
+        "Update `append_response` to EXCLUDE Thinking blocks from the appended message",
+        "Thinking variant is ignored by OpenAI and Google encoders (they don't use it)",
+        "Unit tests verify: thinking blocks parsed, thinking_content extracts correctly, text_content excludes thinking",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "New Content variant rather than separate field - thinking is content, just a different type",
+        "Exclude from text_content() - thinking is internal reasoning, not the response",
+        "Exclude from append_response() - thinking shouldn't go back to the model in conversation history",
+        "Option return for thinking_content - not all responses have thinking",
+        "Concatenate multiple thinking blocks - rare but possible with interleaved thinking"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Thinking blocks may contain sensitive reasoning. Framework developers should consider whether to log/display thinking content."
+    },
+    {
+      "id": "GAI-011",
+      "title": "Caching: Anthropic prompt caching request",
+      "description": "As a framework developer, I need to mark message content for caching to reduce costs and latency on repeated prefixes like system prompts.",
+      "justification": "Anthropic's prompt caching can reduce costs by 90% and latency by 85% for repeated prefixes. Agent frameworks often use the same system prompt across many requests. Marking content for caching is a simple API change that provides significant benefits. This is Anthropic-specific but high-value.",
+      "acceptanceCriteria": [
+        "Add `CacheControl` type to gai.gleam with single variant `Ephemeral`",
+        "Add `cache_control: Option(CacheControl)` field to relevant Content variants (Text, Image, Document) OR create wrapper approach",
+        "Alternative: Add `with_cache_control(msg: Message) -> Message` that marks all content in message for caching",
+        "Update Anthropic request encoder to include `cache_control: {type: 'ephemeral'}` on content blocks when set",
+        "Add `cached_system(text: String) -> Message` convenience function that creates system message with caching enabled",
+        "Non-Anthropic providers ignore cache_control (no-op)",
+        "Unit tests verify: cache_control appears in Anthropic JSON, doesn't appear for other providers",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "CacheControl type with Ephemeral variant - matches Anthropic API, allows future cache types",
+        "Prefer Message-level helper over Content-level - simpler API for common case of caching entire messages",
+        "cached_system convenience - system prompts are the most common caching target",
+        "Silently ignore for non-Anthropic - don't error, just don't include the field",
+        "Only Ephemeral type for now - Anthropic only supports this currently"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Prompt caching has minimum token requirements (1024 tokens for Claude 3.5). Content below this threshold won't be cached. Consider documenting this limitation."
+    },
+    {
+      "id": "GAI-012",
+      "title": "Caching: Anthropic cache usage parsing",
+      "description": "As a framework developer, I need to see cache hit/miss statistics to monitor caching effectiveness and debug caching issues.",
+      "justification": "Without cache stats, developers can't tell if their caching strategy is working. Anthropic returns cache_creation_input_tokens and cache_read_input_tokens in the usage object. Exposing these allows frameworks to track cache hit rates and optimize caching strategies.",
+      "acceptanceCriteria": [
+        "Extend `Usage` type in gai.gleam with optional cache fields: cache_creation_input_tokens (Option(Int)), cache_read_input_tokens (Option(Int))",
+        "Update all provider response parsers to handle new Usage fields (set to None for non-Anthropic)",
+        "Update Anthropic response parser to extract cache_creation_input_tokens and cache_read_input_tokens from usage",
+        "Add `cache_read_tokens(usage: Usage) -> Int` helper that returns cache_read_input_tokens or 0",
+        "Add `cache_creation_tokens(usage: Usage) -> Int` helper that returns cache_creation_input_tokens or 0",
+        "Add `cache_hit_rate(usage: Usage) -> Option(Float)` that calculates read/(read+creation) if any cache activity",
+        "Unit tests verify: cache stats parsed from Anthropic response, None for other providers, helpers work correctly",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "Extend existing Usage type rather than separate AnthropicUsage - simpler API, one type to handle",
+        "Option fields for cache stats - not all responses have cache activity",
+        "Helpers return 0 for None - convenient for arithmetic without unwrapping",
+        "cache_hit_rate returns Option - undefined when no cache activity (avoid division by zero)",
+        "Breaking change to Usage type - acceptable since we're pre-1.0"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "This is a breaking change to the Usage type. All code creating Usage values will need updating. Consider if this should be a separate CacheUsage type instead."
+    },
+    {
+      "id": "GAI-013",
+      "title": "Caching: Response memoization types",
+      "description": "As a framework developer, I need types for caching LLM responses locally to avoid redundant API calls for identical requests.",
+      "justification": "Some agent operations make identical requests (e.g., re-running a workflow). Local response caching can eliminate redundant API calls entirely. gai is transport-agnostic, so we provide the types and key generation for caching, but actual storage is the caller's responsibility.",
+      "acceptanceCriteria": [
+        "Create new module `gai/cache.gleam`",
+        "Add opaque type `CacheKey` wrapping a String hash",
+        "Add `cache_key(req: CompletionRequest) -> CacheKey` that generates deterministic key from request",
+        "Key generation must be deterministic - same request always produces same key",
+        "Key includes: model, messages (serialized), max_tokens, temperature, tools, tool_choice, response_format",
+        "Key excludes: provider_options (provider-specific, may contain non-deterministic values)",
+        "Add `key_to_string(key: CacheKey) -> String` for use as cache storage key",
+        "Add `CacheConfig` type with ttl_seconds (Int) field",
+        "Add `default_cache_config() -> CacheConfig` with ttl_seconds=3600 (1 hour)",
+        "Unit tests verify: same request produces same key, different requests produce different keys, key is stable across runs",
+        "All tests pass"
+      ],
+      "designDecisions": [
+        "Opaque CacheKey type - prevents misuse, allows internal representation changes",
+        "Deterministic key generation using JSON serialization + hashing - simple and reliable",
+        "Exclude provider_options from key - these are escape hatches that may not be cacheable",
+        "No actual cache storage - gai is transport-agnostic, storage is caller's concern",
+        "No cache invalidation logic - simple TTL-based expiry is sufficient for LLM responses",
+        "CacheConfig is minimal - just TTL. Users can build more complex caching on top",
+        "1 hour default TTL - LLM responses don't change, but models get updated occasionally"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "This provides building blocks for caching, not a complete cache implementation. Framework developers will combine this with their preferred storage (in-memory, Redis, SQLite, etc.). Consider providing a simple in-memory cache implementation as a convenience in a separate module."
+    }
+  ]
+}
