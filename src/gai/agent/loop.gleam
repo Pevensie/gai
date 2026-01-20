@@ -134,7 +134,7 @@ fn build_request(
     True -> {
       let tool_schemas =
         agent.tools(agent)
-        |> list.map(tool.executable_to_untyped)
+        |> list.map(tool.to_schema)
       request.with_tools(base_req, tool_schemas)
     }
   }

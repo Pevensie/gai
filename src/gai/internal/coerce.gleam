@@ -3,7 +3,6 @@
 /// This module provides a way to "erase" type parameters while maintaining
 /// runtime safety. It works because neither Erlang nor JavaScript have
 /// runtime type checking - types are a compile-time construct only.
-
 /// Coerce a value to a different type.
 /// 
 /// This is safe at runtime because:
