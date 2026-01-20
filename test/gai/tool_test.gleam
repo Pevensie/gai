@@ -132,6 +132,35 @@ pub fn execute_invalid_test() -> Nil {
 
 // ToolSchema tests
 
+pub fn execute_with_complex_args_test() -> Nil {
+  // This test proves args can be any type, not just String
+  let weather_tool =
+    tool.tool(
+      name: "get_weather",
+      description: "Get weather",
+      schema: weather_schema(),
+      execute: fn(_ctx: TestCtx, args: WeatherParams) {
+        // args.unit is Option(Unit), not String!
+        let unit_name = case args.unit {
+          Some(Celsius) -> "°C"
+          Some(Fahrenheit) -> "°F"
+          None -> "°C"
+        }
+        // args.location is String
+        Ok(args.location <> ": 20" <> unit_name)
+      },
+    )
+
+  // Test with enum value - this would fail if args was String
+  let assert Ok("Tokyo: 20°F") =
+    tool.execute(
+      weather_tool,
+      TestCtx,
+      "{\"location\":\"Tokyo\",\"unit\":\"fahrenheit\"}",
+    )
+  Nil
+}
+
 pub fn to_schema_test() -> Nil {
   let weather_tool =
     tool.tool(
