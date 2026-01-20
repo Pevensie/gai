@@ -1,7 +1,7 @@
 /// Completion request types and builders.
 import gai.{type Message}
 import gai/schema.{type Schema}
-import gai/tool.{type UntypedTool}
+import gai/tool
 import gleam/json.{type Json}
 import gleam/option.{type Option, None}
 
@@ -29,7 +29,7 @@ pub type CompletionRequest {
     temperature: Option(Float),
     top_p: Option(Float),
     stop: Option(List(String)),
-    tools: Option(List(UntypedTool)),
+    tools: Option(List(tool.Schema)),
     tool_choice: Option(ToolChoice),
     response_format: Option(ResponseFormat),
     provider_options: Option(List(#(String, Json))),
@@ -78,7 +78,7 @@ pub fn with_stop(
 /// Set tools
 pub fn with_tools(
   req: CompletionRequest,
-  tools: List(UntypedTool),
+  tools: List(tool.Schema),
 ) -> CompletionRequest {
   CompletionRequest(..req, tools: option.Some(tools))
 }

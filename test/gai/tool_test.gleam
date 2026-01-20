@@ -14,6 +14,11 @@ type Unit {
   Fahrenheit
 }
 
+// Test context
+type TestCtx {
+  TestCtx
+}
+
 fn weather_schema() -> sextant.JsonSchema(WeatherParams) {
   use location <- sextant.field(
     "location",
@@ -30,10 +35,11 @@ fn weather_schema() -> sextant.JsonSchema(WeatherParams) {
 
 pub fn new_tool_test() -> Nil {
   let t =
-    tool.new(
-      "get_weather",
-      "Get current weather for a location",
-      weather_schema(),
+    tool.tool(
+      name: "get_weather",
+      description: "Get current weather for a location",
+      schema: weather_schema(),
+      execute: fn(_ctx: TestCtx, _args) { Ok("sunny") },
     )
 
   let assert "get_weather" = tool.name(t)
@@ -41,10 +47,16 @@ pub fn new_tool_test() -> Nil {
   Nil
 }
 
-pub fn to_json_schema_test() -> Nil {
-  let weather_tool = tool.new("get_weather", "Get weather", weather_schema())
+pub fn tool_schema_test() -> Nil {
+  let weather_tool =
+    tool.tool(
+      name: "get_weather",
+      description: "Get weather",
+      schema: weather_schema(),
+      execute: fn(_ctx: TestCtx, _args) { Ok("sunny") },
+    )
 
-  let json_schema = tool.to_json_schema(weather_tool)
+  let json_schema = tool.schema(weather_tool)
   let json_str = json.to_string(json_schema)
 
   // Should contain the field definitions
@@ -56,49 +68,109 @@ pub fn to_json_schema_test() -> Nil {
   Nil
 }
 
-pub fn parse_arguments_success_test() -> Nil {
-  let weather_tool = tool.new("get_weather", "Get weather", weather_schema())
+pub fn execute_success_test() -> Nil {
+  let weather_tool =
+    tool.tool(
+      name: "get_weather",
+      description: "Get weather",
+      schema: weather_schema(),
+      execute: fn(_ctx: TestCtx, args: WeatherParams) {
+        let unit_str = case args.unit {
+          Some(Celsius) -> "celsius"
+          Some(Fahrenheit) -> "fahrenheit"
+          None -> "celsius"
+        }
+        Ok("Weather in " <> args.location <> ": 20 " <> unit_str)
+      },
+    )
 
   let args_json = "{\"location\":\"London\",\"unit\":\"celsius\"}"
 
-  let assert Ok(WeatherParams(location: "London", unit: Some(Celsius))) =
-    tool.parse_arguments(weather_tool, args_json)
-  Nil
+  assert Ok("Weather in London: 20 celsius")
+    == tool.execute(weather_tool, TestCtx, args_json)
 }
 
-pub fn parse_arguments_optional_missing_test() -> Nil {
-  let weather_tool = tool.new("get_weather", "Get weather", weather_schema())
+pub fn execute_optional_missing_test() -> Nil {
+  let weather_tool =
+    tool.tool(
+      name: "get_weather",
+      description: "Get weather",
+      schema: weather_schema(),
+      execute: fn(_ctx: TestCtx, args: WeatherParams) {
+        let unit_str = case args.unit {
+          Some(Celsius) -> "celsius"
+          Some(Fahrenheit) -> "fahrenheit"
+          None -> "default"
+        }
+        Ok("Weather in " <> args.location <> ": " <> unit_str)
+      },
+    )
 
   let args_json = "{\"location\":\"Paris\"}"
 
-  let assert Ok(WeatherParams(location: "Paris", unit: None)) =
-    tool.parse_arguments(weather_tool, args_json)
-  Nil
+  assert Ok("Weather in Paris: default")
+    == tool.execute(weather_tool, TestCtx, args_json)
 }
 
-pub fn parse_arguments_invalid_test() -> Nil {
-  let weather_tool = tool.new("get_weather", "Get weather", weather_schema())
+pub fn execute_invalid_test() -> Nil {
+  let weather_tool =
+    tool.tool(
+      name: "get_weather",
+      description: "Get weather",
+      schema: weather_schema(),
+      execute: fn(_ctx: TestCtx, _args: WeatherParams) { Ok("ok") },
+    )
 
   // Missing required field
   let args_json = "{}"
 
-  let assert Error(_errors) = tool.parse_arguments(weather_tool, args_json)
-  Nil
+  assert Error(tool.ParseError("Validation failed: missing field 'location'"))
+    == tool.execute(weather_tool, TestCtx, args_json)
 }
 
-// UntypedTool tests
+// ToolSchema tests
 
-pub fn to_untyped_test() -> Nil {
-  let weather_tool = tool.new("get_weather", "Get weather", weather_schema())
+pub fn execute_with_complex_args_test() -> Nil {
+  // This test proves args can be any type, not just String
+  let weather_tool =
+    tool.tool(
+      name: "get_weather",
+      description: "Get weather",
+      schema: weather_schema(),
+      execute: fn(_ctx: TestCtx, args: WeatherParams) {
+        // args.unit is Option(Unit), not String!
+        let unit_name = case args.unit {
+          Some(Celsius) -> "°C"
+          Some(Fahrenheit) -> "°F"
+          None -> "°C"
+        }
+        // args.location is String
+        Ok(args.location <> ": 20" <> unit_name)
+      },
+    )
 
-  let untyped = tool.to_untyped(weather_tool)
+  // Test with enum value - this would fail if args was String
+  assert Ok("Tokyo: 20°F")
+    == tool.execute(
+      weather_tool,
+      TestCtx,
+      "{\"location\":\"Tokyo\",\"unit\":\"fahrenheit\"}",
+    )
+}
 
-  let assert "get_weather" = tool.untyped_name(untyped)
-  let assert "Get weather" = tool.untyped_description(untyped)
+pub fn to_schema_test() -> Nil {
+  let weather_tool =
+    tool.tool(
+      name: "get_weather",
+      description: "Get weather",
+      schema: weather_schema(),
+      execute: fn(_ctx: TestCtx, _args: WeatherParams) { Ok("ok") },
+    )
+
+  let assert tool.Schema("get_weather", "Get weather", schema) =
+    tool.to_schema(weather_tool)
 
   // JSON schema should still be valid
-  let schema_json = tool.untyped_schema(untyped)
-  let json_str = json.to_string(schema_json)
-  assert string.contains(json_str, "location")
-  Nil
+  assert "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"required\":[\"location\"],\"type\":\"object\",\"properties\":{\"location\":{\"description\":\"City name\",\"type\":\"string\"},\"unit\":{\"type\":\"string\",\"enum\":[\"celsius\",\"fahrenheit\"]}},\"additionalProperties\":false}"
+    == json.to_string(schema)
 }

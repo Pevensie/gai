@@ -113,14 +113,21 @@ type SearchParams {
   SearchParams(query: String)
 }
 
+type Ctx
+
 pub fn with_tools_test() {
   let search_schema = {
     use query <- sextant.field("query", sextant.string())
     sextant.success(SearchParams(query:))
   }
   let search_tool =
-    tool.new("search", "Search the web", search_schema)
-    |> tool.to_untyped
+    tool.tool(
+      name: "search",
+      description: "Search the web",
+      schema: search_schema,
+      execute: fn(_ctx: Ctx, _args: SearchParams) { Ok("results") },
+    )
+    |> tool.to_schema
 
   let req =
     request.new("gpt-4o", [gai.user_text("Search for cats")])

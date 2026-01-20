@@ -300,15 +300,12 @@ fn encode_part(content: gai.Content) -> json.Json {
   }
 }
 
-fn encode_tool(t: tool.UntypedTool) -> json.Json {
+fn encode_tool(t: tool.Schema) -> json.Json {
   json.object([
-    #("name", json.string(tool.untyped_name(t))),
-    #("description", json.string(tool.untyped_description(t))),
+    #("name", json.string(t.name)),
+    #("description", json.string(t.description)),
     // Strip $schema and additionalProperties which Google doesn't support
-    #(
-      "parameters",
-      json_decode.strip_unsupported_schema_fields(tool.untyped_schema(t)),
-    ),
+    #("parameters", json_decode.strip_unsupported_schema_fields(t.schema)),
   ])
 }
 
