@@ -113,9 +113,7 @@ type SearchParams {
   SearchParams(query: String)
 }
 
-type Ctx {
-  Ctx
-}
+type Ctx
 
 pub fn with_tools_test() {
   let search_schema = {

@@ -197,7 +197,7 @@ fn serialise_content(content: Content) -> json.Json {
   }
 }
 
-fn serialise_tool(t: tool.ToolSchema) -> json.Json {
+fn serialise_tool(t: tool.Schema) -> json.Json {
   json.object([
     #("name", json.string(t.name)),
     #("description", json.string(t.description)),

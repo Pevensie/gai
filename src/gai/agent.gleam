@@ -1,7 +1,9 @@
 /// Agent configuration for tool-enabled LLM interactions.
 ///
 /// An Agent bundles a provider, system prompt, and executable tools
-/// together for use with the tool loop.
+/// together for use with the tool loop. It focuses on agentic-specific
+/// concerns, leaving request-level config (max_tokens, temperature, etc.)
+/// to be passed separately.
 ///
 /// ## Example
 ///
@@ -25,22 +27,13 @@ pub opaque type Agent(ctx) {
     provider: Provider,
     system_prompt: Option(String),
     tools: List(Tool(ctx)),
-    max_tokens: Option(Int),
-    temperature: Option(Float),
     max_iterations: Int,
   )
 }
 
 /// Create a new agent with a provider
 pub fn new(provider: Provider) -> Agent(ctx) {
-  Agent(
-    provider:,
-    system_prompt: None,
-    tools: [],
-    max_tokens: None,
-    temperature: None,
-    max_iterations: 10,
-  )
+  Agent(provider:, system_prompt: None, tools: [], max_iterations: 10)
 }
 
 /// Set the system prompt
@@ -56,16 +49,6 @@ pub fn with_tool(agent: Agent(ctx), tool: Tool(ctx)) -> Agent(ctx) {
 /// Add multiple tools to the agent
 pub fn with_tools(agent: Agent(ctx), tools: List(Tool(ctx))) -> Agent(ctx) {
   Agent(..agent, tools: list.append(tools, agent.tools))
-}
-
-/// Set max tokens for completions
-pub fn with_max_tokens(agent: Agent(ctx), n: Int) -> Agent(ctx) {
-  Agent(..agent, max_tokens: Some(n))
-}
-
-/// Set temperature for completions
-pub fn with_temperature(agent: Agent(ctx), t: Float) -> Agent(ctx) {
-  Agent(..agent, temperature: Some(t))
 }
 
 /// Set maximum tool loop iterations (safety limit)
@@ -88,16 +71,6 @@ pub fn tools(agent: Agent(ctx)) -> List(Tool(ctx)) {
   agent.tools
 }
 
-/// Get max tokens setting
-pub fn max_tokens(agent: Agent(ctx)) -> Option(Int) {
-  agent.max_tokens
-}
-
-/// Get temperature setting
-pub fn temperature(agent: Agent(ctx)) -> Option(Float) {
-  agent.temperature
-}
-
 /// Get max iterations setting
 pub fn max_iterations(agent: Agent(ctx)) -> Int {
   agent.max_iterations
@@ -106,7 +79,7 @@ pub fn max_iterations(agent: Agent(ctx)) -> Int {
 /// Find a tool by name
 pub fn find_tool(agent: Agent(ctx), name: String) -> Option(Tool(ctx)) {
   agent.tools
-  |> list.find(fn(t) { tool.tool_name(t) == name })
+  |> list.find(fn(t) { tool.name(t) == name })
   |> option.from_result
 }
 
