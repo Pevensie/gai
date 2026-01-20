@@ -300,7 +300,7 @@ fn encode_part(content: gai.Content) -> json.Json {
   }
 }
 
-fn encode_tool(t: tool.ToolSchema) -> json.Json {
+fn encode_tool(t: tool.Schema) -> json.Json {
   json.object([
     #("name", json.string(t.name)),
     #("description", json.string(t.description)),

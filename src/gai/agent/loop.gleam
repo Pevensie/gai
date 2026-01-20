@@ -22,12 +22,12 @@
 import gai.{type Error, type Message}
 import gai/agent.{type Agent}
 import gai/provider
-import gai/request
+import gai/request.{type CompletionRequest}
 import gai/response.{type CompletionResponse}
 import gai/runtime.{type Runtime}
 import gai/tool.{type Call, type CallResult}
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 
 /// Result of running the agent
@@ -49,11 +49,37 @@ pub type RunResult {
 /// 2. Sends messages to the LLM
 /// 3. If tool calls are returned, executes them and loops
 /// 4. Returns when complete or max iterations reached
+///
+/// For request-level config (max_tokens, temperature, etc.), use `run_with_config`.
 pub fn run(
   agent: Agent(ctx),
   ctx: ctx,
   messages: List(Message),
   http_runtime: Runtime,
+) -> Result(RunResult, Error) {
+  run_with_config(agent, ctx, messages, http_runtime, None)
+}
+
+/// Run the agent with a custom request configuration.
+///
+/// The config function receives a base CompletionRequest (with model and messages)
+/// and can modify it to add max_tokens, temperature, tool_choice, etc.
+///
+/// ## Example
+///
+/// ```gleam
+/// loop.run_with_config(agent, ctx, messages, runtime, Some(fn(req) {
+///   req
+///   |> request.with_max_tokens(1000)
+///   |> request.with_temperature(0.7)
+/// }))
+/// ```
+pub fn run_with_config(
+  agent: Agent(ctx),
+  ctx: ctx,
+  messages: List(Message),
+  http_runtime: Runtime,
+  config: Option(fn(CompletionRequest) -> CompletionRequest),
 ) -> Result(RunResult, Error) {
   // Prepend system prompt if set
   let messages = case agent.system_prompt(agent) {
@@ -61,7 +87,7 @@ pub fn run(
     Some(prompt) -> [gai.system(prompt), ..messages]
   }
 
-  run_loop(agent, ctx, messages, http_runtime, 0)
+  run_loop(agent, ctx, messages, http_runtime, config, 0)
 }
 
 fn run_loop(
@@ -69,6 +95,7 @@ fn run_loop(
   ctx: ctx,
   messages: List(Message),
   http_runtime: Runtime,
+  config: Option(fn(CompletionRequest) -> CompletionRequest),
   iteration: Int,
 ) -> Result(RunResult, Error) {
   // Check iteration limit
@@ -80,7 +107,7 @@ fn run_loop(
       ))
     False -> {
       // Build request
-      let req = build_request(agent, messages)
+      let req = build_request(agent, messages, config)
 
       // Build HTTP request using provider
       let http_req = provider.build_request(agent.provider(agent), req)
@@ -115,7 +142,7 @@ fn run_loop(
           let messages = append_tool_results(messages, results)
 
           // Continue loop
-          run_loop(agent, ctx, messages, http_runtime, iteration + 1)
+          run_loop(agent, ctx, messages, http_runtime, config, iteration + 1)
         }
       }
     }
@@ -125,7 +152,8 @@ fn run_loop(
 fn build_request(
   agent: Agent(ctx),
   messages: List(Message),
-) -> request.CompletionRequest {
+  config: Option(fn(CompletionRequest) -> CompletionRequest),
+) -> CompletionRequest {
   let base_req = request.new(provider.name(agent.provider(agent)), messages)
 
   // Add tools if any
@@ -139,19 +167,11 @@ fn build_request(
     }
   }
 
-  // Add max_tokens if set
-  let req = case agent.max_tokens(agent) {
+  // Apply user config if provided
+  case config {
     None -> req
-    Some(n) -> request.with_max_tokens(req, n)
+    Some(configure) -> configure(req)
   }
-
-  // Add temperature if set
-  let req = case agent.temperature(agent) {
-    None -> req
-    Some(t) -> request.with_temperature(req, t)
-  }
-
-  req
 }
 
 fn extract_tool_calls(resp: CompletionResponse) -> List(Call) {

@@ -42,8 +42,8 @@ pub fn new_tool_test() -> Nil {
       execute: fn(_ctx: TestCtx, _args) { Ok("sunny") },
     )
 
-  let assert "get_weather" = tool.tool_name(t)
-  let assert "Get current weather for a location" = tool.tool_description(t)
+  let assert "get_weather" = tool.name(t)
+  let assert "Get current weather for a location" = tool.description(t)
   Nil
 }
 
@@ -56,7 +56,7 @@ pub fn tool_schema_test() -> Nil {
       execute: fn(_ctx: TestCtx, _args) { Ok("sunny") },
     )
 
-  let json_schema = tool.tool_schema(weather_tool)
+  let json_schema = tool.schema(weather_tool)
   let json_str = json.to_string(json_schema)
 
   // Should contain the field definitions
@@ -86,9 +86,8 @@ pub fn execute_success_test() -> Nil {
 
   let args_json = "{\"location\":\"London\",\"unit\":\"celsius\"}"
 
-  let assert Ok("Weather in London: 20 celsius") =
-    tool.execute(weather_tool, TestCtx, args_json)
-  Nil
+  assert Ok("Weather in London: 20 celsius")
+    == tool.execute(weather_tool, TestCtx, args_json)
 }
 
 pub fn execute_optional_missing_test() -> Nil {
@@ -109,9 +108,8 @@ pub fn execute_optional_missing_test() -> Nil {
 
   let args_json = "{\"location\":\"Paris\"}"
 
-  let assert Ok("Weather in Paris: default") =
-    tool.execute(weather_tool, TestCtx, args_json)
-  Nil
+  assert Ok("Weather in Paris: default")
+    == tool.execute(weather_tool, TestCtx, args_json)
 }
 
 pub fn execute_invalid_test() -> Nil {
@@ -126,8 +124,8 @@ pub fn execute_invalid_test() -> Nil {
   // Missing required field
   let args_json = "{}"
 
-  let assert Error(_) = tool.execute(weather_tool, TestCtx, args_json)
-  Nil
+  assert Error(tool.ParseError("Validation failed: missing field 'location'"))
+    == tool.execute(weather_tool, TestCtx, args_json)
 }
 
 // ToolSchema tests
@@ -152,13 +150,12 @@ pub fn execute_with_complex_args_test() -> Nil {
     )
 
   // Test with enum value - this would fail if args was String
-  let assert Ok("Tokyo: 20°F") =
-    tool.execute(
+  assert Ok("Tokyo: 20°F")
+    == tool.execute(
       weather_tool,
       TestCtx,
       "{\"location\":\"Tokyo\",\"unit\":\"fahrenheit\"}",
     )
-  Nil
 }
 
 pub fn to_schema_test() -> Nil {
@@ -170,13 +167,10 @@ pub fn to_schema_test() -> Nil {
       execute: fn(_ctx: TestCtx, _args: WeatherParams) { Ok("ok") },
     )
 
-  let schema = tool.to_schema(weather_tool)
-
-  let assert "get_weather" = schema.name
-  let assert "Get weather" = schema.description
+  let assert tool.Schema("get_weather", "Get weather", schema) =
+    tool.to_schema(weather_tool)
 
   // JSON schema should still be valid
-  let json_str = json.to_string(schema.schema)
-  assert string.contains(json_str, "location")
-  Nil
+  assert "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"required\":[\"location\"],\"type\":\"object\",\"properties\":{\"location\":{\"description\":\"City name\",\"type\":\"string\"},\"unit\":{\"type\":\"string\",\"enum\":[\"celsius\",\"fahrenheit\"]}},\"additionalProperties\":false}"
+    == json.to_string(schema)
 }

@@ -256,7 +256,7 @@ fn encode_content(content: gai.Content) -> json.Json {
   }
 }
 
-fn encode_tool(t: tool.ToolSchema) -> json.Json {
+fn encode_tool(t: tool.Schema) -> json.Json {
   json.object([
     #("type", json.string("function")),
     #(

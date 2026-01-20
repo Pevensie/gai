@@ -1,21 +1,27 @@
 /// Integration tests demonstrating full request/response flows.
+///
+/// This file contains two types of tests:
+/// 1. Agent-based tests - High-level API with automatic tool execution
+/// 2. Request-based tests - Low-level API for manual control
 import gai
+import gai/agent
+import gai/agent/loop
 import gai/anthropic
 import gai/google
 import gai/openai
 import gai/provider
 import gai/request
 import gai/response
+import gai/runtime
 import gai/streaming
 import gai/tool
-import gleam/dynamic/decode as gleam_decode
 import gleam/http/response as http_response
-import gleam/json as gleam_json
-import gleam/option
+import gleam/list
+import gleam/option.{Some}
 import sextant
 
 // ============================================================================
-// OpenAI Integration Test
+// Shared Types
 // ============================================================================
 
 pub type SearchParams {
@@ -23,7 +29,7 @@ pub type SearchParams {
 }
 
 type TestCtx {
-  TestCtx
+  TestCtx(context: String)
 }
 
 fn search_schema() -> sextant.JsonSchema(SearchParams) {
@@ -31,11 +37,202 @@ fn search_schema() -> sextant.JsonSchema(SearchParams) {
   sextant.success(SearchParams(query:))
 }
 
-pub fn openai_full_flow_test() {
-  // 1. Create config
+// ============================================================================
+// Agent Integration Tests (High-level API)
+// ============================================================================
+
+pub fn agent_openai_integration_test() {
+  // 1. Create provider
+  let config = openai.new("sk-test-key")
+  let provider = openai.provider(config)
+
+  // 2. Create tool with executor
+  let search_tool =
+    tool.tool(
+      name: "search",
+      description: "Search the web",
+      schema: search_schema(),
+      execute: fn(ctx: TestCtx, args: SearchParams) {
+        Ok("Context: " <> ctx.context <> ". Query: " <> args.query)
+      },
+    )
+
+  // 3. Create agent
+  let my_agent =
+    agent.new(provider)
+    |> agent.with_system_prompt("You are a helpful assistant.")
+    |> agent.with_tool(search_tool)
+    |> agent.with_max_iterations(3)
+
+  // 4. Create mock runtime that returns a tool call, then a final response
+  let mock_runtime =
+    runtime.new(fn(req) {
+      case
+        req.body
+        == "{\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"search\",\"description\":\"Search the web\",\"parameters\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"required\":[\"query\"],\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}},\"additionalProperties\":false}}}],\"model\":\"openai\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"Search for Gleam programming language\"}]}"
+      {
+        False ->
+          // Second call: LLM returns final response after tool execution
+          Ok(
+            http_response.new(200)
+            |> http_response.set_body(
+              "{
+                \"id\": \"chatcmpl-2\",
+                \"model\": \"gpt-4o\",
+                \"choices\": [{
+                  \"message\": {
+                    \"role\": \"assistant\",
+                    \"content\": \"The search results are: Context: I am the context. Query: Gleam language\"
+                  },
+                  \"finish_reason\": \"stop\"
+                }],
+                \"usage\": {\"prompt_tokens\": 70, \"completion_tokens\": 30}
+              }",
+            ),
+          )
+        True ->
+          Ok(
+            http_response.new(200)
+            |> http_response.set_body(
+              "{
+            \"id\": \"chatcmpl-1\",
+            \"model\": \"gpt-4o\",
+            \"choices\": [{
+              \"message\": {
+                \"role\": \"assistant\",
+                \"content\": null,
+                \"tool_calls\": [{
+                  \"id\": \"call_123\",
+                  \"type\": \"function\",
+                  \"function\": {
+                    \"name\": \"search\",
+                    \"arguments\": \"{\\\"query\\\": \\\"Gleam language\\\"}\"
+                  }
+                }]
+              },
+              \"finish_reason\": \"tool_calls\"
+            }],
+            \"usage\": {\"prompt_tokens\": 50, \"completion_tokens\": 20}
+          }",
+            ),
+          )
+      }
+    })
+
+  // 5. Run the agent
+  let ctx = TestCtx("I am the context")
+  let messages = [gai.user_text("Search for Gleam programming language")]
+
+  let assert Ok(loop.RunResult(
+    response: response.CompletionResponse(
+      "chatcmpl-2",
+      "gpt-4o",
+      [
+        gai.Text(
+          "The search results are: Context: I am the context. Query: Gleam language",
+        ),
+      ],
+      gai.EndTurn,
+      gai.Usage(70, 30, option.None, option.None),
+    ),
+    messages: [
+      gai.Message(
+        gai.System,
+        [gai.Text("You are a helpful assistant.")],
+        option.None,
+      ),
+      gai.Message(
+        gai.User,
+        [gai.Text("Search for Gleam programming language")],
+        option.None,
+      ),
+      gai.Message(
+        gai.Assistant,
+        [gai.ToolUse("call_123", "search", "{\"query\": \"Gleam language\"}")],
+        option.None,
+      ),
+      gai.Message(
+        gai.User,
+        [
+          gai.ToolResult(
+            tool_use_id: "call_123",
+            content: [
+              gai.Text("Context: I am the context. Query: Gleam language"),
+            ],
+          ),
+        ],
+        option.None,
+      ),
+      gai.Message(
+        gai.Assistant,
+        [
+          gai.Text(
+            "The search results are: Context: I am the context. Query: Gleam language",
+          ),
+        ],
+        option.None,
+      ),
+    ],
+    iterations: 2,
+  )) = loop.run(my_agent, ctx, messages, mock_runtime)
+}
+
+pub fn agent_with_config_test() {
+  // Test that we can pass request config to the agent loop
+  let config = anthropic.new("sk-ant-test")
+  let provider = anthropic.provider(config)
+
+  let my_agent =
+    agent.new(provider)
+    |> agent.with_system_prompt("You are Claude.")
+
+  // Create a mock runtime
+  let mock_runtime =
+    runtime.new(fn(_req) {
+      let json_body =
+        "{
+        \"id\": \"msg_1\",
+        \"model\": \"claude-3-opus\",
+        \"content\": [{\"type\": \"text\", \"text\": \"Hello!\"}],
+        \"stop_reason\": \"end_turn\",
+        \"usage\": {\"input_tokens\": 10, \"output_tokens\": 5}
+      }"
+      Ok(
+        http_response.new(200)
+        |> http_response.set_body(json_body),
+      )
+    })
+
+  let messages = [gai.user_text("Hi")]
+
+  // Run with custom config (max_tokens, temperature)
+  let result =
+    loop.run_with_config(
+      my_agent,
+      Nil,
+      messages,
+      mock_runtime,
+      Some(fn(req) {
+        req
+        |> request.with_max_tokens(100)
+        |> request.with_temperature(0.7)
+      }),
+    )
+
+  let assert Ok(run_result) = result
+  let assert "Hello!" = response.text_content(run_result.response)
+  let assert 1 = run_result.iterations
+  Nil
+}
+
+// ============================================================================
+// Request Integration Tests (Low-level API)
+// ============================================================================
+
+pub fn openai_request_test() {
+  // Low-level test: build request manually
   let config = openai.new("sk-test-key")
 
-  // 2. Create tool
   let search_tool =
     tool.tool(
       name: "search",
@@ -45,77 +242,26 @@ pub fn openai_full_flow_test() {
     )
     |> tool.to_schema
 
-  // 3. Build request
   let req =
     request.new("gpt-4o", [
       gai.system("You are a helpful assistant."),
-      gai.user_text("Search for Gleam programming language"),
+      gai.user_text("Search for Gleam"),
     ])
     |> request.with_max_tokens(100)
     |> request.with_temperature(0.7)
     |> request.with_tools([search_tool])
     |> request.with_tool_choice(request.Auto)
 
-  // 4. Build HTTP request
   let http_req = openai.build_request(config, req)
 
-  // Verify request was built
   let assert "api.openai.com" = http_req.host
   assert http_req.body != ""
-
-  // 5. Simulate response
-  let json_body =
-    "{
-    \"id\": \"chatcmpl-integration\",
-    \"model\": \"gpt-4o-2024-05-13\",
-    \"choices\": [{
-      \"message\": {
-        \"role\": \"assistant\",
-        \"content\": null,
-        \"tool_calls\": [{
-          \"id\": \"call_abc\",
-          \"type\": \"function\",
-          \"function\": {
-            \"name\": \"search\",
-            \"arguments\": \"{\\\"query\\\": \\\"Gleam programming language\\\"}\"
-          }
-        }]
-      },
-      \"finish_reason\": \"tool_calls\"
-    }],
-    \"usage\": {\"prompt_tokens\": 50, \"completion_tokens\": 20}
-  }"
-
-  let http_resp =
-    http_response.new(200)
-    |> http_response.set_body(json_body)
-
-  // 6. Parse response
-  let assert Ok(completion) = openai.parse_response(http_resp)
-
-  // 7. Verify response
-  assert response.has_tool_calls(completion)
-  let assert response.CompletionResponse(stop_reason: gai.ToolUsed, ..) =
-    completion
-  let assert [gai.ToolUse(id: "call_abc", name: "search", arguments_json:)] =
-    response.tool_calls(completion)
-
-  // 8. Parse tool arguments directly with sextant
-  let assert Ok(dynamic_args) =
-    gleam_json.parse(arguments_json, gleam_decode.dynamic)
-  let assert Ok(SearchParams(query: "Gleam programming language")) =
-    sextant.run(dynamic_args, search_schema())
+  Nil
 }
 
-// ============================================================================
-// Anthropic Integration Test
-// ============================================================================
-
-pub fn anthropic_full_flow_test() {
-  // 1. Create config
+pub fn anthropic_request_test() {
   let config = anthropic.new("sk-ant-test")
 
-  // 2. Build request
   let req =
     request.new("claude-3-opus-20240229", [
       gai.system("You are Claude."),
@@ -123,17 +269,61 @@ pub fn anthropic_full_flow_test() {
     ])
     |> request.with_max_tokens(100)
 
-  // 3. Build HTTP request
   let http_req = anthropic.build_request(config, req)
 
-  // Verify request was built
   let assert "api.anthropic.com" = http_req.host
+  Nil
+}
 
-  // 4. Simulate response
+pub fn google_request_test() {
+  let config = google.new("test-api-key")
+
+  let req =
+    request.new("gemini-1.5-pro", [
+      gai.system("You are Gemini."),
+      gai.user_text("Hello!"),
+    ])
+    |> request.with_max_tokens(50)
+
+  let http_req = google.build_request(config, req)
+
+  let assert "generativelanguage.googleapis.com" = http_req.host
+  Nil
+}
+
+// ============================================================================
+// Response Parsing Tests
+// ============================================================================
+
+pub fn openai_response_parsing_test() {
   let json_body =
     "{
-    \"id\": \"msg_integration\",
-    \"model\": \"claude-3-opus-20240229\",
+    \"id\": \"chatcmpl-test\",
+    \"model\": \"gpt-4o\",
+    \"choices\": [{
+      \"message\": {
+        \"role\": \"assistant\",
+        \"content\": \"Hello world!\"
+      },
+      \"finish_reason\": \"stop\"
+    }],
+    \"usage\": {\"prompt_tokens\": 10, \"completion_tokens\": 5}
+  }"
+
+  let http_resp =
+    http_response.new(200)
+    |> http_response.set_body(json_body)
+
+  let assert Ok(completion) = openai.parse_response(http_resp)
+  let assert "Hello world!" = response.text_content(completion)
+  Nil
+}
+
+pub fn anthropic_response_parsing_test() {
+  let json_body =
+    "{
+    \"id\": \"msg_test\",
+    \"model\": \"claude-3-opus\",
     \"content\": [{\"type\": \"text\", \"text\": \"2 + 2 = 4\"}],
     \"stop_reason\": \"end_turn\",
     \"usage\": {\"input_tokens\": 20, \"output_tokens\": 10}
@@ -143,43 +333,17 @@ pub fn anthropic_full_flow_test() {
     http_response.new(200)
     |> http_response.set_body(json_body)
 
-  // 5. Parse response
   let assert Ok(completion) = anthropic.parse_response(http_resp)
-
-  // 6. Verify response
   let assert "2 + 2 = 4" = response.text_content(completion)
-  let assert response.CompletionResponse(stop_reason: gai.EndTurn, ..) =
-    completion
+  Nil
 }
 
-// ============================================================================
-// Google Gemini Integration Test
-// ============================================================================
-
-pub fn google_full_flow_test() {
-  // 1. Create config
-  let config = google.new("test-api-key")
-
-  // 2. Build request
-  let req =
-    request.new("gemini-1.5-pro", [
-      gai.system("You are Gemini."),
-      gai.user_text("Hello!"),
-    ])
-    |> request.with_max_tokens(50)
-
-  // 3. Build HTTP request
-  let http_req = google.build_request(config, req)
-
-  // Verify request was built
-  let assert "generativelanguage.googleapis.com" = http_req.host
-
-  // 4. Simulate response
+pub fn google_response_parsing_test() {
   let json_body =
     "{
     \"candidates\": [{
       \"content\": {
-        \"parts\": [{\"text\": \"Hello! How can I help you?\"}],
+        \"parts\": [{\"text\": \"Hello from Gemini!\"}],
         \"role\": \"model\"
       },
       \"finishReason\": \"STOP\"
@@ -191,11 +355,9 @@ pub fn google_full_flow_test() {
     http_response.new(200)
     |> http_response.set_body(json_body)
 
-  // 5. Parse response
   let assert Ok(completion) = google.parse_response(http_resp)
-
-  // 6. Verify response
-  let assert "Hello! How can I help you?" = response.text_content(completion)
+  let assert "Hello from Gemini!" = response.text_content(completion)
+  Nil
 }
 
 // ============================================================================
@@ -203,7 +365,6 @@ pub fn google_full_flow_test() {
 // ============================================================================
 
 pub fn provider_abstraction_test() {
-  // Test that the Provider type enables provider-agnostic code
   let openai_provider =
     openai.new("sk-test")
     |> openai.provider
@@ -225,67 +386,32 @@ pub fn provider_abstraction_test() {
   let _anthropic_http = provider.build_request(anthropic_provider, req)
   let _google_http = provider.build_request(google_provider, req)
 
-  // Provider names are correct
   let assert "openai" = provider.name(openai_provider)
   let assert "anthropic" = provider.name(anthropic_provider)
   let assert "google" = provider.name(google_provider)
+  Nil
 }
 
 // ============================================================================
-// Streaming Integration Test
+// Streaming Test
 // ============================================================================
 
-pub fn streaming_integration_test() {
-  // Simulate a complete streaming session
+pub fn streaming_test() {
   let raw_sse =
-    "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"world!\"}}]}\n\ndata: {\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n"
+    "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" world!\"}}]}\n\ndata: {\"choices\":[{\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n"
 
-  // 1. Parse SSE events
   let events = streaming.parse_sse(raw_sse)
-  let assert 5 = length(events)
+  let assert 4 = list.length(events)
 
-  // 2. Process each event through OpenAI parser
   let deltas =
     events
-    |> filter_map(fn(e) {
-      case openai.parse_stream_chunk(e) {
-        Ok(d) -> option.Some(d)
-        Error(_) -> option.None
-      }
-    })
+    |> list.filter_map(openai.parse_stream_chunk)
 
-  // 3. Accumulate into final response
   let acc =
     deltas
-    |> fold(streaming.new_accumulator(), streaming.accumulate)
+    |> list.fold(streaming.new_accumulator(), streaming.accumulate)
 
-  // 4. Finish and verify
   let assert Ok(completion) = streaming.finish(acc)
   let assert "Hello world!" = response.text_content(completion)
-}
-
-// Helper functions for tests
-fn length(list: List(a)) -> Int {
-  case list {
-    [] -> 0
-    [_, ..rest] -> 1 + length(rest)
-  }
-}
-
-fn filter_map(list: List(a), f: fn(a) -> option.Option(b)) -> List(b) {
-  case list {
-    [] -> []
-    [first, ..rest] ->
-      case f(first) {
-        option.Some(b) -> [b, ..filter_map(rest, f)]
-        option.None -> filter_map(rest, f)
-      }
-  }
-}
-
-fn fold(list: List(a), acc: b, f: fn(b, a) -> b) -> b {
-  case list {
-    [] -> acc
-    [first, ..rest] -> fold(rest, f(acc, first), f)
-  }
+  Nil
 }
