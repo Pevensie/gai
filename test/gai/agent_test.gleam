@@ -29,9 +29,9 @@ fn search_schema() {
   sextant.success(SearchArgs(query:))
 }
 
-pub fn executable_tool_creation_test() {
+pub fn tool_creation_test() {
   let weather_tool =
-    tool.executable(
+    tool.tool(
       name: "get_weather",
       description: "Get weather for a location",
       schema: weather_schema(),
@@ -40,14 +40,14 @@ pub fn executable_tool_creation_test() {
       },
     )
 
-  let assert "get_weather" = tool.executable_name(weather_tool)
-  let assert "Get weather for a location" = tool.executable_description(weather_tool)
+  let assert "get_weather" = tool.tool_name(weather_tool)
+  let assert "Get weather for a location" = tool.tool_description(weather_tool)
   Nil
 }
 
-pub fn executable_tool_execution_test() {
+pub fn tool_execution_test() {
   let weather_tool =
-    tool.executable(
+    tool.tool(
       name: "get_weather",
       description: "Get weather for a location",
       schema: weather_schema(),
@@ -65,13 +65,17 @@ pub fn executable_tool_execution_test() {
 
   // Test with unit specified
   let assert Ok("Weather in London: 20fahrenheit") =
-    tool.execute(weather_tool, ctx, "{\"location\": \"London\", \"unit\": \"fahrenheit\"}")
+    tool.execute(
+      weather_tool,
+      ctx,
+      "{\"location\": \"London\", \"unit\": \"fahrenheit\"}",
+    )
   Nil
 }
 
-pub fn executable_tool_parse_error_test() {
+pub fn tool_parse_error_test() {
   let weather_tool =
-    tool.executable(
+    tool.tool(
       name: "get_weather",
       description: "Get weather for a location",
       schema: weather_schema(),
@@ -111,7 +115,7 @@ pub fn agent_with_tools_test() {
   let provider = anthropic.provider(config)
 
   let weather_tool =
-    tool.executable(
+    tool.tool(
       name: "get_weather",
       description: "Get weather",
       schema: weather_schema(),
@@ -121,7 +125,7 @@ pub fn agent_with_tools_test() {
     )
 
   let search_tool =
-    tool.executable(
+    tool.tool(
       name: "search",
       description: "Search web",
       schema: search_schema(),
@@ -156,18 +160,18 @@ pub fn tool_call_result_test() {
   Nil
 }
 
-pub fn executable_to_untyped_test() {
+pub fn tool_to_schema_test() {
   let weather_tool =
-    tool.executable(
+    tool.tool(
       name: "get_weather",
       description: "Get weather for a location",
       schema: weather_schema(),
       execute: fn(_ctx: TestContext, _args: WeatherArgs) { Ok("ok") },
     )
 
-  let untyped = tool.executable_to_untyped(weather_tool)
+  let schema = tool.to_schema(weather_tool)
 
-  let assert "get_weather" = tool.untyped_name(untyped)
-  let assert "Get weather for a location" = tool.untyped_description(untyped)
+  let assert "get_weather" = schema.name
+  let assert "Get weather for a location" = schema.description
   Nil
 }

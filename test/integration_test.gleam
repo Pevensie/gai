@@ -8,7 +8,9 @@ import gai/request
 import gai/response
 import gai/streaming
 import gai/tool
+import gleam/dynamic/decode as gleam_decode
 import gleam/http/response as http_response
+import gleam/json as gleam_json
 import gleam/option
 import sextant
 
@@ -18,6 +20,10 @@ import sextant
 
 pub type SearchParams {
   SearchParams(query: String)
+}
+
+type TestCtx {
+  TestCtx
 }
 
 fn search_schema() -> sextant.JsonSchema(SearchParams) {
@@ -31,8 +37,13 @@ pub fn openai_full_flow_test() {
 
   // 2. Create tool
   let search_tool =
-    tool.new("search", "Search the web", search_schema())
-    |> tool.to_untyped
+    tool.tool(
+      name: "search",
+      description: "Search the web",
+      schema: search_schema(),
+      execute: fn(_ctx: TestCtx, _args: SearchParams) { Ok("results") },
+    )
+    |> tool.to_schema
 
   // 3. Build request
   let req =
@@ -89,10 +100,11 @@ pub fn openai_full_flow_test() {
   let assert [gai.ToolUse(id: "call_abc", name: "search", arguments_json:)] =
     response.tool_calls(completion)
 
-  // 8. Parse tool arguments using the typed tool
-  let typed_tool = tool.new("search", "Search the web", search_schema())
+  // 8. Parse tool arguments directly with sextant
+  let assert Ok(dynamic_args) =
+    gleam_json.parse(arguments_json, gleam_decode.dynamic)
   let assert Ok(SearchParams(query: "Gleam programming language")) =
-    tool.parse_arguments(typed_tool, arguments_json)
+    sextant.run(dynamic_args, search_schema())
 }
 
 // ============================================================================

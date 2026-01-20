@@ -421,11 +421,11 @@ fn encode_content(content: gai.Content) -> json.Json {
   }
 }
 
-fn encode_tool(t: tool.UntypedTool) -> json.Json {
+fn encode_tool(t: tool.ToolSchema) -> json.Json {
   json.object([
-    #("name", json.string(tool.untyped_name(t))),
-    #("description", json.string(tool.untyped_description(t))),
-    #("input_schema", tool.untyped_schema(t)),
+    #("name", json.string(t.name)),
+    #("description", json.string(t.description)),
+    #("input_schema", t.schema),
   ])
 }
 

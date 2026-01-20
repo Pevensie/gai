@@ -12,10 +12,10 @@
 ///   |> agent.with_tool(search_tool)
 ///   |> agent.with_max_iterations(5)
 /// ```
+import gai/provider.{type Provider}
+import gai/tool.{type Tool}
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gai/provider.{type Provider}
-import gai/tool.{type ExecutableTool, type ToolArgs}
 
 /// Agent configuration with context type parameter.
 ///
@@ -24,7 +24,7 @@ pub opaque type Agent(ctx) {
   Agent(
     provider: Provider,
     system_prompt: Option(String),
-    tools: List(ExecutableTool(ctx, ToolArgs)),
+    tools: List(Tool(ctx)),
     max_tokens: Option(Int),
     temperature: Option(Float),
     max_iterations: Int,
@@ -49,18 +49,12 @@ pub fn with_system_prompt(agent: Agent(ctx), prompt: String) -> Agent(ctx) {
 }
 
 /// Add a tool to the agent
-pub fn with_tool(
-  agent: Agent(ctx),
-  tool: ExecutableTool(ctx, ToolArgs),
-) -> Agent(ctx) {
+pub fn with_tool(agent: Agent(ctx), tool: Tool(ctx)) -> Agent(ctx) {
   Agent(..agent, tools: [tool, ..agent.tools])
 }
 
 /// Add multiple tools to the agent
-pub fn with_tools(
-  agent: Agent(ctx),
-  tools: List(ExecutableTool(ctx, ToolArgs)),
-) -> Agent(ctx) {
+pub fn with_tools(agent: Agent(ctx), tools: List(Tool(ctx))) -> Agent(ctx) {
   Agent(..agent, tools: list.append(tools, agent.tools))
 }
 
@@ -90,7 +84,7 @@ pub fn system_prompt(agent: Agent(ctx)) -> Option(String) {
 }
 
 /// Get tools as a list
-pub fn tools(agent: Agent(ctx)) -> List(ExecutableTool(ctx, ToolArgs)) {
+pub fn tools(agent: Agent(ctx)) -> List(Tool(ctx)) {
   agent.tools
 }
 
@@ -110,12 +104,9 @@ pub fn max_iterations(agent: Agent(ctx)) -> Int {
 }
 
 /// Find a tool by name
-pub fn find_tool(
-  agent: Agent(ctx),
-  name: String,
-) -> Option(ExecutableTool(ctx, ToolArgs)) {
+pub fn find_tool(agent: Agent(ctx), name: String) -> Option(Tool(ctx)) {
   agent.tools
-  |> list.find(fn(t) { tool.executable_name(t) == name })
+  |> list.find(fn(t) { tool.tool_name(t) == name })
   |> option.from_result
 }
 
