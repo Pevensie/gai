@@ -22,6 +22,16 @@ import gleam/list
 import gleam/string
 import sextant.{type JsonSchema}
 
+// ============================================================================
+// Internal: Coerce
+// ============================================================================
+
+/// Coerce a value to a different type. Safe at runtime because neither
+/// Erlang nor JavaScript have runtime type checking.
+@external(erlang, "gleam@function", "identity")
+@external(javascript, "../gleam_stdlib/gleam/function", "identity")
+fn coerce(value: a) -> b
+
 /// An executable tool with embedded executor.
 ///
 /// The `ctx` type parameter is the context passed to the executor.
