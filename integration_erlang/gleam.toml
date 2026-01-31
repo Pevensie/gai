@@ -20,8 +20,9 @@ envoy = ">= 1.1.0 and < 2.0.0"
 simplifile = ">= 2.3.0 and < 3.0.0"
 gleam_json = ">= 3.1.0 and < 4.0.0"
 gleam_http = ">= 4.3.0 and < 5.0.0"
-gai = { path = ".." }
-sextant = { path = "../../sextant" }
+gai = { path = "./gai" }
+gai_erlang = { path = "./gai_erlang" }
+sextant = ">= 1.0.0 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
