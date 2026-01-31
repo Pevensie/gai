@@ -28,7 +28,7 @@ pub type Content {
   Document(source: DocumentSource, media_type: String)
   /// Tool use with raw JSON arguments string for lossless round-tripping
   ToolUse(id: String, name: String, arguments_json: String)
-  ToolResult(tool_use_id: String, content: List(Content))
+  ToolResult(tool_use_id: String, output: String, is_error: Bool)
   /// Extended thinking content (Claude's internal reasoning)
   Thinking(text: String)
 }
@@ -183,14 +183,13 @@ pub fn document_base64(data: String, media_type: String) -> Content {
 
 /// Create a tool result content block
 pub fn tool_result(tool_use_id: String, result: String) -> Content {
-  ToolResult(tool_use_id, [Text(result)])
+  ToolResult(tool_use_id, result, False)
 }
 
 /// Create a tool result content block indicating an error
 pub fn tool_result_error(tool_use_id: String, error: String) -> Content {
-  // Note: Some providers have an is_error flag - for now we just use error text
-  // This can be extended when provider-specific error handling is needed
-  ToolResult(tool_use_id, [Text(error)])
+  // Some providers support an is_error flag; we set it here and keep the output text
+  ToolResult(tool_use_id, error, True)
 }
 
 /// Create a User message containing multiple tool results

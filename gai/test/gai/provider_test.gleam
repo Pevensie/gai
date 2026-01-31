@@ -44,6 +44,7 @@ pub fn provider_parse_response_test() {
 fn make_test_provider() -> provider.Provider {
   provider.Provider(
     name: "test",
+    model: "test-model",
     build_request: fn(_req) {
       http_request.new()
       |> http_request.set_body("test request body")

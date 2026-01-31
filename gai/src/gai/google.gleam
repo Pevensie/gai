@@ -27,17 +27,26 @@ import gleam/uri
 
 /// Google Gemini configuration (opaque type)
 pub opaque type Config {
-  Config(api_key: String, base_url: String)
+  Config(api_key: String, base_url: String, model: String)
 }
 
 /// Create a new Google Gemini config
 pub fn new(api_key: String) -> Config {
-  Config(api_key:, base_url: "https://generativelanguage.googleapis.com/v1beta")
+  Config(
+    api_key:,
+    base_url: "https://generativelanguage.googleapis.com/v1beta",
+    model: "",
+  )
 }
 
 /// Use a custom base URL (for proxies, etc.)
 pub fn with_base_url(config: Config, url: String) -> Config {
   Config(..config, base_url: url)
+}
+
+/// Set default model
+pub fn with_model(config: Config, model: String) -> Config {
+  Config(..config, model: model)
 }
 
 // ============================================================================
@@ -279,7 +288,7 @@ fn encode_part(content: gai.Content) -> json.Json {
         ),
       ])
     }
-    gai.ToolResult(tool_use_id, result_content) ->
+    gai.ToolResult(tool_use_id, output, _is_error) ->
       json.object([
         #(
           "functionResponse",
@@ -288,7 +297,7 @@ fn encode_part(content: gai.Content) -> json.Json {
             #(
               "response",
               json.object([
-                #("content", json.array(result_content, encode_part)),
+                #("content", json.array([gai.Text(output)], encode_part)),
               ]),
             ),
           ]),
@@ -300,12 +309,12 @@ fn encode_part(content: gai.Content) -> json.Json {
   }
 }
 
-fn encode_tool(t: tool.Schema) -> json.Json {
+fn encode_tool(t: tool.ToolSchema) -> json.Json {
   json.object([
     #("name", json.string(t.name)),
     #("description", json.string(t.description)),
     // Strip $schema and additionalProperties which Google doesn't support
-    #("parameters", json_decode.strip_unsupported_schema_fields(t.schema)),
+    #("parameters", json_decode.strip_unsupported_schema_fields(t.schema_json)),
   ])
 }
 
@@ -571,6 +580,7 @@ fn parse_stream_content_delta(
 pub fn provider(config: Config) -> provider.Provider {
   provider.Provider(
     name: "google",
+    model: config.model,
     build_request: fn(req) { build_request(config, req) },
     parse_response: parse_response,
     parse_stream_chunk: parse_stream_chunk,

@@ -53,13 +53,12 @@ fn weather_schema() -> sextant.JsonSchema(WeatherParams) {
   sextant.success(WeatherParams(location:))
 }
 
-fn weather_tool() -> tool.UntypedTool {
-  tool.new(
-    "get_weather",
-    "Get current weather for a location",
-    weather_schema(),
+fn weather_tool() -> tool.ToolSchema {
+  tool.ToolSchema(
+    name: "get_weather",
+    description: "Get current weather for a location",
+    schema_json: sextant.to_json(weather_schema()),
   )
-  |> tool.to_untyped
 }
 
 pub fn tool_call_test() -> Promise(Nil) {

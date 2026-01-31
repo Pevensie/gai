@@ -31,6 +31,7 @@ pub opaque type Config {
     api_key: String,
     base_url: String,
     anthropic_version: String,
+    model: String,
     thinking_budget: Int,
   )
 }
@@ -41,6 +42,7 @@ pub fn new(api_key: String) -> Config {
     api_key:,
     base_url: "https://api.anthropic.com/v1",
     anthropic_version: "2023-06-01",
+    model: "",
     thinking_budget: 0,
   )
 }
@@ -53,6 +55,11 @@ pub fn with_base_url(config: Config, url: String) -> Config {
 /// Set API version
 pub fn with_version(config: Config, version: String) -> Config {
   Config(..config, anthropic_version: version)
+}
+
+/// Set default model
+pub fn with_model(config: Config, model: String) -> Config {
+  Config(..config, model: model)
 }
 
 /// Enable extended thinking with a token budget.
@@ -406,12 +413,19 @@ fn encode_content(content: gai.Content) -> json.Json {
         #("input", input),
       ])
     }
-    gai.ToolResult(tool_use_id, result_content) ->
-      json.object([
+    gai.ToolResult(tool_use_id, output, is_error) -> {
+      let content = json.array([gai.Text(output)], encode_content)
+      let fields = [
         #("type", json.string("tool_result")),
         #("tool_use_id", json.string(tool_use_id)),
-        #("content", json.array(result_content, encode_content)),
-      ])
+        #("content", content),
+      ]
+      let fields = case is_error {
+        True -> [#("is_error", json.bool(True)), ..fields]
+        False -> fields
+      }
+      json.object(fields)
+    }
     gai.Thinking(text) ->
       // Thinking content shouldn't normally be sent back, but handle it gracefully
       json.object([
@@ -421,11 +435,11 @@ fn encode_content(content: gai.Content) -> json.Json {
   }
 }
 
-fn encode_tool(t: tool.Schema) -> json.Json {
+fn encode_tool(t: tool.ToolSchema) -> json.Json {
   json.object([
     #("name", json.string(t.name)),
     #("description", json.string(t.description)),
-    #("input_schema", t.schema),
+    #("input_schema", t.schema_json),
   ])
 }
 
@@ -673,6 +687,7 @@ fn parse_message_delta(
 pub fn provider(config: Config) -> provider.Provider {
   provider.Provider(
     name: "anthropic",
+    model: config.model,
     build_request: fn(req) { build_request(config, req) },
     parse_response: parse_response,
     parse_stream_chunk: parse_stream_chunk,

@@ -27,12 +27,22 @@ import gleam/uri
 
 /// OpenAI configuration (opaque type)
 pub opaque type Config {
-  Config(api_key: String, base_url: String, organization: Option(String))
+  Config(
+    api_key: String,
+    base_url: String,
+    organization: Option(String),
+    model: String,
+  )
 }
 
 /// Create a new OpenAI config
 pub fn new(api_key: String) -> Config {
-  Config(api_key:, base_url: "https://api.openai.com/v1", organization: None)
+  Config(
+    api_key:,
+    base_url: "https://api.openai.com/v1",
+    organization: None,
+    model: "",
+  )
 }
 
 /// Use a custom base URL (for proxies, Azure, etc.)
@@ -45,23 +55,43 @@ pub fn with_organization(config: Config, org: String) -> Config {
   Config(..config, organization: Some(org))
 }
 
+/// Set default model
+pub fn with_model(config: Config, model: String) -> Config {
+  Config(..config, model: model)
+}
+
 // ============================================================================
 // Convenience constructors for OpenAI-compatible providers
 // ============================================================================
 
 /// Create config for OpenRouter
 pub fn openrouter(api_key: String) -> Config {
-  Config(api_key:, base_url: "https://openrouter.ai/api/v1", organization: None)
+  Config(
+    api_key:,
+    base_url: "https://openrouter.ai/api/v1",
+    organization: None,
+    model: "",
+  )
 }
 
 /// Create config for xAI (Grok)
 pub fn xai(api_key: String) -> Config {
-  Config(api_key:, base_url: "https://api.x.ai/v1", organization: None)
+  Config(
+    api_key:,
+    base_url: "https://api.x.ai/v1",
+    organization: None,
+    model: "",
+  )
 }
 
 /// Create config for Mistral
 pub fn mistral(api_key: String) -> Config {
-  Config(api_key:, base_url: "https://api.mistral.ai/v1", organization: None)
+  Config(
+    api_key:,
+    base_url: "https://api.mistral.ai/v1",
+    organization: None,
+    model: "",
+  )
 }
 
 /// Create config for Groq
@@ -70,12 +100,18 @@ pub fn groq(api_key: String) -> Config {
     api_key:,
     base_url: "https://api.groq.com/openai/v1",
     organization: None,
+    model: "",
   )
 }
 
 /// Create config for Together AI
 pub fn together(api_key: String) -> Config {
-  Config(api_key:, base_url: "https://api.together.xyz/v1", organization: None)
+  Config(
+    api_key:,
+    base_url: "https://api.together.xyz/v1",
+    organization: None,
+    model: "",
+  )
 }
 
 // ============================================================================
@@ -244,11 +280,11 @@ fn encode_content(content: gai.Content) -> json.Json {
         ),
       ])
     }
-    gai.ToolResult(tool_use_id, result_content) ->
+    gai.ToolResult(tool_use_id, output, _is_error) ->
       json.object([
         #("type", json.string("tool_result")),
         #("tool_use_id", json.string(tool_use_id)),
-        #("content", json.array(result_content, encode_content)),
+        #("content", json.array([gai.Text(output)], encode_content)),
       ])
     gai.Thinking(_) ->
       // Thinking is Anthropic-specific, ignored for OpenAI
@@ -256,7 +292,7 @@ fn encode_content(content: gai.Content) -> json.Json {
   }
 }
 
-fn encode_tool(t: tool.Schema) -> json.Json {
+fn encode_tool(t: tool.ToolSchema) -> json.Json {
   json.object([
     #("type", json.string("function")),
     #(
@@ -264,7 +300,7 @@ fn encode_tool(t: tool.Schema) -> json.Json {
       json.object([
         #("name", json.string(t.name)),
         #("description", json.string(t.description)),
-        #("parameters", t.schema),
+        #("parameters", t.schema_json),
       ]),
     ),
   ])
@@ -538,6 +574,7 @@ fn parse_stream_content_delta(
 pub fn provider(config: Config) -> provider.Provider {
   provider.Provider(
     name: "openai",
+    model: config.model,
     build_request: fn(req) { build_request(config, req) },
     parse_response: parse_response,
     parse_stream_chunk: parse_stream_chunk,

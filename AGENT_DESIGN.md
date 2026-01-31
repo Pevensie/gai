@@ -19,18 +19,16 @@ gai/src/                          # Shared, target-agnostic
     └── agent.gleam               # StopCondition (shared)
 
 gai_erlang/src/                   # Erlang runtime
-├── gai_erlang.gleam
+├── gai_erlang.gleam              # Loop entrypoint (sync recursive loop)
 └── gai_erlang/
     ├── tool.gleam                # Tool(ctx) with sync executor
-    ├── agent.gleam               # Agent(ctx) with send function
-    └── loop.gleam                # Sync recursive loop
+    └── agent.gleam               # Agent(ctx) with send function
 
 gai_javascript/src/               # JavaScript runtime
-├── gai_javascript.gleam
+├── gai_javascript.gleam          # Loop entrypoint (Promise-based loop)
 └── gai_javascript/
     ├── tool.gleam                # Tool(ctx) with async executor
-    ├── agent.gleam               # Agent(ctx) with fetch function
-    └── loop.gleam                # Promise-based loop
+    └── agent.gleam               # Agent(ctx) with fetch function
 ```
 
 ### Why Separate Runtime Packages?
@@ -243,7 +241,7 @@ Otherwise it stops. This handles all stop reasons automatically:
 import gai
 import gai/anthropic
 import gai_erlang/agent
-import gai_erlang/loop
+import gai_erlang
 import gai_erlang/tool
 
 pub fn main() {
@@ -272,7 +270,7 @@ pub fn main() {
     gai.user_text("Weather in Tokyo?"),
   ]
 
-  case loop.run(my_agent, ctx, messages) {
+  case gai_erlang.run(my_agent, ctx, messages) {
     Ok(result) -> io.println(response.text_content(result.response))
     Error(e) -> io.println(gai.error_to_string(e.error))
   }
@@ -310,7 +308,7 @@ let weather_tool = tool.new(
   },
 )
 
-loop.run(my_agent, ctx, messages)
+gai_javascript.run(my_agent, ctx, messages)
 |> promise.map(fn(result) { ... })
 ```
 
@@ -328,7 +326,7 @@ let test_agent = agent.new(provider)
 ### Handling Partial Results on Error
 
 ```gleam
-case loop.run(my_agent, ctx, messages) {
+case gai_erlang.run(my_agent, ctx, messages) {
   Ok(result) ->
     io.println("Success after " <> int.to_string(result.iterations) <> " iterations")
   Error(loop_error) -> {
@@ -364,9 +362,9 @@ The loop passes `ctx` to each tool execution unchanged.
 
 4. **Delete**: `gai/agent/loop.gleam` - moves to runtime packages.
 
-5. **`gai_erlang/`**: Implement tool, agent (with send field, stop_on_tool helper), loop (with LoopError).
+5. **`gai_erlang/`**: Implement tool, agent (with send field, stop_on_tool helper), loop in `gai_erlang.gleam` (with LoopError).
 
-6. **`gai_javascript/`**: Same, with Promise-based signatures. Add FFI for fetch.
+6. **`gai_javascript/`**: Same, with Promise-based signatures. Keep loop in `gai_javascript.gleam` to mirror Erlang. Add FFI for fetch.
 
 **Dependencies:**
 

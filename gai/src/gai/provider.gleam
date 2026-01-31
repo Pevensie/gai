@@ -15,6 +15,8 @@ pub type Provider {
   Provider(
     /// Provider name (e.g., "openai", "anthropic")
     name: String,
+    /// Default model for this provider
+    model: String,
     /// Build an HTTP request from a completion request
     build_request: fn(gai_request.CompletionRequest) -> Request(String),
     /// Parse an HTTP response into a completion response
@@ -28,6 +30,11 @@ pub type Provider {
 /// Get the provider name
 pub fn name(provider: Provider) -> String {
   provider.name
+}
+
+/// Get the default model
+pub fn model(provider: Provider) -> String {
+  provider.model
 }
 
 /// Build an HTTP request using the provider

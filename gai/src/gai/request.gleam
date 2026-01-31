@@ -29,7 +29,7 @@ pub type CompletionRequest {
     temperature: Option(Float),
     top_p: Option(Float),
     stop: Option(List(String)),
-    tools: Option(List(tool.Schema)),
+    tools: Option(List(tool.ToolSchema)),
     tool_choice: Option(ToolChoice),
     response_format: Option(ResponseFormat),
     provider_options: Option(List(#(String, Json))),
@@ -78,7 +78,7 @@ pub fn with_stop(
 /// Set tools
 pub fn with_tools(
   req: CompletionRequest,
-  tools: List(tool.Schema),
+  tools: List(tool.ToolSchema),
 ) -> CompletionRequest {
   CompletionRequest(..req, tools: option.Some(tools))
 }

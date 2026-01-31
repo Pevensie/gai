@@ -1,23 +1,18 @@
 /// Integration tests demonstrating full request/response flows.
 ///
-/// This file contains two types of tests:
-/// 1. Agent-based tests - High-level API with automatic tool execution
-/// 2. Request-based tests - Low-level API for manual control
+/// These are low-level API tests for manual request/response control.
+/// For agent-based tests with tool loops, see gai_erlang/test/.
 import gai
-import gai/agent
-import gai/agent/loop
 import gai/anthropic
 import gai/google
 import gai/openai
 import gai/provider
 import gai/request
 import gai/response
-import gai/runtime
 import gai/streaming
 import gai/tool
 import gleam/http/response as http_response
 import gleam/list
-import gleam/option.{Some}
 import sextant
 
 // ============================================================================
@@ -28,201 +23,9 @@ pub type SearchParams {
   SearchParams(query: String)
 }
 
-type TestCtx {
-  TestCtx(context: String)
-}
-
 fn search_schema() -> sextant.JsonSchema(SearchParams) {
   use query <- sextant.field("query", sextant.string())
   sextant.success(SearchParams(query:))
-}
-
-// ============================================================================
-// Agent Integration Tests (High-level API)
-// ============================================================================
-
-pub fn agent_openai_integration_test() {
-  // 1. Create provider
-  let config = openai.new("sk-test-key")
-  let provider = openai.provider(config)
-
-  // 2. Create tool with executor
-  let search_tool =
-    tool.tool(
-      name: "search",
-      description: "Search the web",
-      schema: search_schema(),
-      execute: fn(ctx: TestCtx, args: SearchParams) {
-        Ok("Context: " <> ctx.context <> ". Query: " <> args.query)
-      },
-    )
-
-  // 3. Create agent
-  let my_agent =
-    agent.new(provider)
-    |> agent.with_system_prompt("You are a helpful assistant.")
-    |> agent.with_tool(search_tool)
-    |> agent.with_max_iterations(3)
-
-  // 4. Create mock runtime that returns a tool call, then a final response
-  let mock_runtime =
-    runtime.new(fn(req) {
-      case
-        req.body
-        == "{\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"search\",\"description\":\"Search the web\",\"parameters\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"required\":[\"query\"],\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}},\"additionalProperties\":false}}}],\"model\":\"openai\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"Search for Gleam programming language\"}]}"
-      {
-        False ->
-          // Second call: LLM returns final response after tool execution
-          Ok(
-            http_response.new(200)
-            |> http_response.set_body(
-              "{
-                \"id\": \"chatcmpl-2\",
-                \"model\": \"gpt-4o\",
-                \"choices\": [{
-                  \"message\": {
-                    \"role\": \"assistant\",
-                    \"content\": \"The search results are: Context: I am the context. Query: Gleam language\"
-                  },
-                  \"finish_reason\": \"stop\"
-                }],
-                \"usage\": {\"prompt_tokens\": 70, \"completion_tokens\": 30}
-              }",
-            ),
-          )
-        True ->
-          Ok(
-            http_response.new(200)
-            |> http_response.set_body(
-              "{
-            \"id\": \"chatcmpl-1\",
-            \"model\": \"gpt-4o\",
-            \"choices\": [{
-              \"message\": {
-                \"role\": \"assistant\",
-                \"content\": null,
-                \"tool_calls\": [{
-                  \"id\": \"call_123\",
-                  \"type\": \"function\",
-                  \"function\": {
-                    \"name\": \"search\",
-                    \"arguments\": \"{\\\"query\\\": \\\"Gleam language\\\"}\"
-                  }
-                }]
-              },
-              \"finish_reason\": \"tool_calls\"
-            }],
-            \"usage\": {\"prompt_tokens\": 50, \"completion_tokens\": 20}
-          }",
-            ),
-          )
-      }
-    })
-
-  // 5. Run the agent
-  let ctx = TestCtx("I am the context")
-  let messages = [gai.user_text("Search for Gleam programming language")]
-
-  let assert Ok(loop.RunResult(
-    response: response.CompletionResponse(
-      "chatcmpl-2",
-      "gpt-4o",
-      [
-        gai.Text(
-          "The search results are: Context: I am the context. Query: Gleam language",
-        ),
-      ],
-      gai.EndTurn,
-      gai.Usage(70, 30, option.None, option.None),
-    ),
-    messages: [
-      gai.Message(
-        gai.System,
-        [gai.Text("You are a helpful assistant.")],
-        option.None,
-      ),
-      gai.Message(
-        gai.User,
-        [gai.Text("Search for Gleam programming language")],
-        option.None,
-      ),
-      gai.Message(
-        gai.Assistant,
-        [gai.ToolUse("call_123", "search", "{\"query\": \"Gleam language\"}")],
-        option.None,
-      ),
-      gai.Message(
-        gai.User,
-        [
-          gai.ToolResult(
-            tool_use_id: "call_123",
-            content: [
-              gai.Text("Context: I am the context. Query: Gleam language"),
-            ],
-          ),
-        ],
-        option.None,
-      ),
-      gai.Message(
-        gai.Assistant,
-        [
-          gai.Text(
-            "The search results are: Context: I am the context. Query: Gleam language",
-          ),
-        ],
-        option.None,
-      ),
-    ],
-    iterations: 2,
-  )) = loop.run(my_agent, ctx, messages, mock_runtime)
-}
-
-pub fn agent_with_config_test() {
-  // Test that we can pass request config to the agent loop
-  let config = anthropic.new("sk-ant-test")
-  let provider = anthropic.provider(config)
-
-  let my_agent =
-    agent.new(provider)
-    |> agent.with_system_prompt("You are Claude.")
-
-  // Create a mock runtime
-  let mock_runtime =
-    runtime.new(fn(_req) {
-      let json_body =
-        "{
-        \"id\": \"msg_1\",
-        \"model\": \"claude-3-opus\",
-        \"content\": [{\"type\": \"text\", \"text\": \"Hello!\"}],
-        \"stop_reason\": \"end_turn\",
-        \"usage\": {\"input_tokens\": 10, \"output_tokens\": 5}
-      }"
-      Ok(
-        http_response.new(200)
-        |> http_response.set_body(json_body),
-      )
-    })
-
-  let messages = [gai.user_text("Hi")]
-
-  // Run with custom config (max_tokens, temperature)
-  let result =
-    loop.run_with_config(
-      my_agent,
-      Nil,
-      messages,
-      mock_runtime,
-      Some(fn(req) {
-        req
-        |> request.with_max_tokens(100)
-        |> request.with_temperature(0.7)
-      }),
-    )
-
-  let assert Ok(run_result) = result
-  let assert "Hello!" = response.text_content(run_result.response)
-  let assert 1 = run_result.iterations
-  Nil
 }
 
 // ============================================================================
@@ -234,13 +37,11 @@ pub fn openai_request_test() {
   let config = openai.new("sk-test-key")
 
   let search_tool =
-    tool.tool(
+    tool.ToolSchema(
       name: "search",
       description: "Search the web",
-      schema: search_schema(),
-      execute: fn(_ctx: TestCtx, _args: SearchParams) { Ok("results") },
+      schema_json: sextant.to_json(search_schema()),
     )
-    |> tool.to_schema
 
   let req =
     request.new("gpt-4o", [

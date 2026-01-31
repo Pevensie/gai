@@ -181,21 +181,19 @@ pub fn stop_reason_variants_test() {
 
 pub fn tool_result_test() {
   let content = gai.tool_result("call_123", "Weather is sunny")
-  let assert gai.ToolResult("call_123", [gai.Text("Weather is sunny")]) =
-    content
+  let assert gai.ToolResult("call_123", "Weather is sunny", False) = content
 }
 
 pub fn tool_result_error_test() {
   let content = gai.tool_result_error("call_123", "Location not found")
-  let assert gai.ToolResult("call_123", [gai.Text("Location not found")]) =
-    content
+  let assert gai.ToolResult("call_123", "Location not found", True) = content
 }
 
 pub fn tool_results_message_single_test() {
   let msg = gai.tool_results_message([#("call_1", "Result 1")])
   let assert gai.Message(
     role: gai.User,
-    content: [gai.ToolResult("call_1", [gai.Text("Result 1")])],
+    content: [gai.ToolResult("call_1", "Result 1", False)],
     ..,
   ) = msg
 }
@@ -206,8 +204,8 @@ pub fn tool_results_message_multiple_test() {
   let assert gai.Message(
     role: gai.User,
     content: [
-      gai.ToolResult("call_1", [gai.Text("Result 1")]),
-      gai.ToolResult("call_2", [gai.Text("Result 2")]),
+      gai.ToolResult("call_1", "Result 1", False),
+      gai.ToolResult("call_2", "Result 2", False),
     ],
     ..,
   ) = msg
@@ -217,7 +215,7 @@ pub fn tool_results_message_empty_result_test() {
   let msg = gai.tool_results_message([#("call_1", "")])
   let assert gai.Message(
     role: gai.User,
-    content: [gai.ToolResult("call_1", [gai.Text("")])],
+    content: [gai.ToolResult("call_1", "", False)],
     ..,
   ) = msg
 }

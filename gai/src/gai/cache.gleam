@@ -183,11 +183,12 @@ fn serialise_content(content: Content) -> json.Json {
         #("name", json.string(name)),
         #("arguments", json.string(arguments_json)),
       ])
-    gai.ToolResult(tool_use_id, result_content) ->
+    gai.ToolResult(tool_use_id, output, is_error) ->
       json.object([
         #("type", json.string("tool_result")),
         #("tool_use_id", json.string(tool_use_id)),
-        #("content", json.array(result_content, serialise_content)),
+        #("output", json.string(output)),
+        #("is_error", json.bool(is_error)),
       ])
     gai.Thinking(text) ->
       json.object([
@@ -197,11 +198,11 @@ fn serialise_content(content: Content) -> json.Json {
   }
 }
 
-fn serialise_tool(t: tool.Schema) -> json.Json {
+fn serialise_tool(t: tool.ToolSchema) -> json.Json {
   json.object([
     #("name", json.string(t.name)),
     #("description", json.string(t.description)),
-    #("schema", t.schema),
+    #("schema", t.schema_json),
   ])
 }
 
